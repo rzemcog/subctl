@@ -26,7 +26,12 @@ if [[ "$ROOT_DIR" != "$APP_DIR" ]]; then
 fi
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
+command -v node >/dev/null 2>&1 || { echo "Node.js 20.19+ is required" >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "npm is required to build the Web UI" >&2; exit 1; }
+if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); const valid = (major === 20 && minor >= 19) || (major === 22 && minor >= 12) || major > 22; process.exit(valid ? 0 : 1)'; then
+  echo "Node.js 20.19+ (or 22.12+) is required; found $(node --version)" >&2
+  exit 1
+fi
 
 getent group subctl >/dev/null 2>&1 || groupadd --system subctl
 id -u subctl >/dev/null 2>&1 || useradd --system --home-dir "$STATE_DIR" \
