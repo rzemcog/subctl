@@ -87,3 +87,31 @@ def test_public_fetch_records_user_telemetry_without_ip(tmp_path: Path) -> None:
         assert activity["fetch"]["yaml"]["http_status"] == 200
         assert "ip" not in str(activity)
         assert created["status"]["artifacts"]["yaml"]["present"] is False
+
+
+def test_internal_subscription_check_does_not_look_like_client_download(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    app = create_app(service=service, store=store)
+    with TestClient(app) as client:
+        client.post(
+            "/api/users",
+            headers={"X-Subctl-UI": "1"},
+            json={"name": "alice", "xui_subscription": "https://panel.example/sub/alice"},
+        )
+        user = service.get_user("alice")
+        output = service._config().public.output_dir / "s"
+        output.mkdir(parents=True)
+        (output / f"{user.token}.yaml").write_text("profile", encoding="utf-8")
+
+        response = client.get(
+            f"/s/{user.token}.yaml",
+            headers={
+                "User-Agent": "subctl-smoke/1",
+                "X-Subctl-Internal-Check": "1",
+            },
+        )
+        assert response.status_code == 200
+        assert client.get("/api/users/alice/activity").json()["activity"]["fetch"] == {}
