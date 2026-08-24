@@ -1,0 +1,37 @@
+provider:
+  upstream_url: "https://provider.example/subscription"
+  # Generate a different value for every deployment. This value is only a
+  # non-secret placeholder for local development.
+  shared_token: "00000000000000000000000000000000"
+  refresh_interval_seconds: 900
+
+public:
+  base_url: "https://sub.example.com"
+  output_dir: "./tmp/public"
+
+render:
+  profile_update_interval_seconds: 3600
+  provider_update_interval_seconds: 900
+  healthcheck_url: "https://www.gstatic.com/generate_204"
+  healthcheck_interval_seconds: 15
+  healthcheck_timeout_milliseconds: 3000
+  healthcheck_max_failed_times: 2
+  healthcheck_tolerance_milliseconds: 50
+  healthcheck_lazy: true
+  provider_exclude_keywords:
+    - "test"
+
+# Uncomment only in the protected production config. Never commit real values.
+# gateway:
+#   private_upstream_url: "https://panel.example.com/sub/gateway-client"
+#   controller_secret: "replace-with-a-random-32-character-secret"
+#   output_path: "/etc/mihomo/config.yaml"
+#   output_owner: "mihomo"
+#   output_group: "mihomo"
+#   socks_port: 10808
+#   controller_port: 19090
+#   base_default: "PROXY"
+#   physical_interface: "eth0"
+#   external_ui_path: "/var/lib/mihomo/ui/current"
+#   tun_output_path: "/etc/mihomo/config-tun.yaml"
+#   dns_nameservers: ["1.1.1.1", "8.8.8.8"]

@@ -1,0 +1,34 @@
+[Unit]
+Description=subctl web administration UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=subctl
+Group=subctl
+WorkingDirectory=/opt/subctl
+Environment=SUBCTL_WEB_CONFIG=/etc/subctl/config.yaml
+Environment=SUBCTL_WEB_USERS=/var/lib/subctl/registry/users.yaml
+Environment=SUBCTL_WEB_STATE_DIR=/var/lib/subctl
+Environment=SUBCTL_WEB_OUTPUT_DIR=/var/lib/subctl/public
+Environment=SUBCTL_WEB_JOBS_DB=/var/lib/subctl/ui/jobs.sqlite3
+Environment=SUBCTL_WEB_LOCK_FILE=/var/lib/subctl/ui/refresh.lock
+ExecStart=/opt/subctl/venv/bin/uvicorn subctl.web:app --host 127.0.0.1 --port 12790 --no-access-log
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/subctl
+ReadOnlyPaths=/etc/subctl/config.yaml
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+users: {}
+
+# Add users with:
+# subctl --users ./examples/users.yaml add-user \
+#   --name alice --xui-sub-url https://panel.example.com/sub/example

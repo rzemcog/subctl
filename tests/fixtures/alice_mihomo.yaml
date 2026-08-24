@@ -1,0 +1,72 @@
+proxy-providers:
+  private:
+    type: http
+    url: https://panel.example.com/sub/alice
+    interval: 3600
+    path: ./providers/private.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 15
+      timeout: 3000
+      lazy: true
+  provider:
+    type: http
+    url: https://sub.example.com/feeds/provider/provider_shared_token_1234567890abcd
+    interval: 900
+    path: ./providers/provider.yaml
+    exclude-filter: (?i)(?:Киев|Москва)
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 15
+      timeout: 3000
+      lazy: true
+proxy-groups:
+- name: PRIVATE
+  type: select
+  use:
+  - private
+- name: PROVIDER-AUTO
+  type: url-test
+  use:
+  - provider
+  url: https://www.gstatic.com/generate_204
+  interval: 15
+  timeout: 3000
+  max-failed-times: 2
+  tolerance: 50
+  lazy: true
+- name: AUTO
+  type: fallback
+  proxies:
+  - PRIVATE
+  - PROVIDER-AUTO
+  url: https://www.gstatic.com/generate_204
+  interval: 15
+  timeout: 3000
+  max-failed-times: 2
+  lazy: true
+- name: PROXY
+  type: select
+  proxies:
+  - AUTO
+  - PRIVATE
+  - PROVIDER-AUTO
+  - DIRECT
+- name: BASE
+  type: select
+  proxies:
+  - DIRECT
+  - PROXY
+rules:
+- IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+- IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+- IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+- IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+- IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
+- IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+- IP-CIDR,::1/128,DIRECT,no-resolve
+- IP-CIDR,fc00::/7,DIRECT,no-resolve
+- IP-CIDR,fe80::/10,DIRECT,no-resolve
+- MATCH,BASE

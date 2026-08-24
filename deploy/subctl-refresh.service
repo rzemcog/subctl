@@ -1,0 +1,31 @@
+[Unit]
+Description=Refresh and render subctl subscriptions
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=subctl
+Group=subctl
+UMask=0077
+Environment=SUBCTL_BIN=/opt/subctl/venv/bin/subctl
+Environment=SUBCTL_CONFIG=/etc/subctl/config.yaml
+Environment=SUBCTL_USERS=/var/lib/subctl/registry/users.yaml
+Environment=SUBCTL_STATE_DIR=/var/lib/subctl
+Environment=SUBCTL_OUTPUT_DIR=/var/lib/subctl/public
+Environment=SUBCTL_LOCK_FILE=/var/lib/subctl/ui/refresh.lock
+EnvironmentFile=-/etc/default/subctl-refresh
+StateDirectory=subctl
+RuntimeDirectory=subctl-refresh
+RuntimeDirectoryMode=0750
+ExecStart=/bin/sh -eu -c 'exec /usr/bin/flock -n "$SUBCTL_LOCK_FILE" /bin/sh -eu -c '"'"'"$SUBCTL_BIN" --config "$SUBCTL_CONFIG" --users "$SUBCTL_USERS" --state-dir "$SUBCTL_STATE_DIR" --output-dir "$SUBCTL_OUTPUT_DIR" refresh-provider && "$SUBCTL_BIN" --config "$SUBCTL_CONFIG" --users "$SUBCTL_USERS" --state-dir "$SUBCTL_STATE_DIR" --output-dir "$SUBCTL_OUTPUT_DIR" render --all'"'"''
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/subctl /run/subctl-refresh
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
