@@ -10,7 +10,16 @@ possible.
 sudo apt update
 sudo apt install -y \
   ca-certificates curl git python3 python3-venv python3-pip \
-  nodejs npm caddy tar coreutils gettext-base
+  caddy tar coreutils gettext-base
+```
+
+Install Node.js 20.19+ (or 22.12+) with npm using a trusted version manager
+or distribution repository. Ubuntu 24.04's default Node.js package may be too
+old for the current Vite toolchain. Verify the selected runtime before build:
+
+```bash
+node --version
+npm --version
 ```
 
 Install Mihomo separately when the gateway is required. Verify that the binary

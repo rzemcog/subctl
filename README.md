@@ -41,7 +41,7 @@ The supported deployment targets are Ubuntu 24.04 and Debian 12 with systemd.
 Development requires:
 
 - Python 3.10 or newer;
-- Node.js 20 or newer and npm for the Web UI;
+- Node.js 20.19+ (or 22.12+) and npm for the Web UI;
 - Git and a POSIX shell.
 
 Server deployment additionally requires Caddy. Mihomo and MetaCubeXD are
