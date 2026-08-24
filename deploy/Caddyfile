@@ -1,0 +1,42 @@
+# Managed for subctl subscriptions and the loopback admin UI.
+# Caddy does not log tokenized subscription paths; FastAPI records only
+# user/format/time/status telemetry without the token or client IP.
+(subctl_static) {
+	root * /var/lib/subctl/public
+
+	@hidden path_regexp hidden (^|/)\.
+	@service path_regexp service (^|/)(?:Caddyfile|config\.yaml|users\.yaml|.*~|.*\.bak|.*\.tmp)$
+	respond @hidden 404
+	respond @service 404
+
+	header /s/* {
+		Profile-Update-Interval "1"
+		Cache-Control "no-store"
+		X-Content-Type-Options "nosniff"
+	}
+
+	header /feeds/provider/* {
+		Profile-Update-Interval "1"
+		Cache-Control "no-store"
+		X-Content-Type-Options "nosniff"
+	}
+
+	@subscriptions {
+		path /s/*
+		path /feeds/provider/*
+	}
+
+	route @subscriptions {
+		reverse_proxy 127.0.0.1:12790
+	}
+
+	respond 404
+}
+
+http://{$SUBCTL_DOMAIN} {
+	import subctl_static
+}
+
+{$SUBCTL_DOMAIN} {
+	import subctl_static
+}

@@ -1,0 +1,43 @@
+[Unit]
+Description=Mihomo TUN gateway
+Documentation=https://wiki.metacubex.one/
+Wants=network-online.target
+After=network-online.target
+Conflicts=mihomo.service
+
+[Service]
+Type=simple
+User=mihomo
+Group=mihomo
+UMask=0077
+StateDirectory=mihomo
+StateDirectoryMode=0700
+ExecStartPre=/usr/local/bin/mihomo -t -d /var/lib/mihomo -f /etc/mihomo/config-tun.yaml
+ExecStart=/usr/local/bin/mihomo -d /var/lib/mihomo -f /etc/mihomo/config-tun.yaml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+PrivateDevices=false
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/mihomo
+ReadOnlyPaths=/var/lib/mihomo/ui
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
