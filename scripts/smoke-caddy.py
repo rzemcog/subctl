@@ -12,7 +12,13 @@ import yaml
 
 
 def fetch(url: str) -> int:
-    request = urllib.request.Request(url, headers={"User-Agent": "subctl-smoke/1"})
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "subctl-smoke/1",
+            "X-Subctl-Internal-Check": "1",
+        },
+    )
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             body = response.read()

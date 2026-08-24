@@ -14,6 +14,7 @@ from .service import SubscriptionService, summary_message
 
 
 TERMINAL_STATUSES = ("succeeded", "failed", "interrupted")
+FETCH_SOURCES = ("client", "internal")
 
 
 class JobStore:
@@ -68,10 +69,19 @@ class JobStore:
                     format TEXT NOT NULL,
                     fetched_at TEXT NOT NULL,
                     http_status INTEGER NOT NULL,
-                    content_length INTEGER
+                    content_length INTEGER,
+                    source TEXT NOT NULL DEFAULT 'client'
                 )
                 """
             )
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(fetch_events)").fetchall()
+            }
+            if "source" not in columns:
+                connection.execute(
+                    "ALTER TABLE fetch_events ADD COLUMN source TEXT NOT NULL DEFAULT 'client'"
+                )
             connection.commit()
 
     def recover_active(self) -> int:
@@ -190,12 +200,23 @@ class JobStore:
             )
             connection.commit()
 
-    def record_fetch(self, user_name: str, format_name: str, http_status: int, content_length: int | None) -> None:
+    def record_fetch(
+        self,
+        user_name: str,
+        format_name: str,
+        http_status: int,
+        content_length: int | None,
+        *,
+        source: str = "client",
+    ) -> None:
+        if source not in FETCH_SOURCES:
+            raise ValueError(f"invalid fetch source: {source}")
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO fetch_events (user_name, format, fetched_at, http_status, content_length) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (user_name, format_name, _now(), http_status, content_length),
+                "INSERT INTO fetch_events "
+                "(user_name, format, fetched_at, http_status, content_length, source) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (user_name, format_name, _now(), http_status, content_length, source),
             )
             connection.execute(
                 "DELETE FROM fetch_events WHERE id IN ("
@@ -216,7 +237,8 @@ class JobStore:
                 (user_name,),
             ).fetchone()
             fetch_rows = connection.execute(
-                "SELECT * FROM fetch_events WHERE user_name=? ORDER BY id DESC LIMIT 100",
+                "SELECT * FROM fetch_events "
+                "WHERE user_name=? AND source='client' ORDER BY id DESC LIMIT 100",
                 (user_name,),
             ).fetchall()
         if active is not None:
