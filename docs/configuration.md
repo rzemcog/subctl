@@ -18,6 +18,7 @@ public:
 render:
   profile_update_interval_seconds: 3600
   provider_update_interval_seconds: 900
+  provider_download_proxy: DIRECT
   healthcheck_url: "https://www.gstatic.com/generate_204"
   healthcheck_interval_seconds: 15
   healthcheck_timeout_milliseconds: 3000
@@ -41,6 +42,8 @@ gateway:
   tun_output_path: "/etc/mihomo/config-tun.yaml"
   dns_nameservers: ["192.0.2.1", "192.0.2.1"]
 ```
+
+The rendered Mihomo `proxy-providers.provider.proxy` controls how clients download the shared provider. `render.provider_download_proxy` defaults to `DIRECT`; if changed, the named outbound or group must exist in the generated profile and should not depend on the provider being downloaded.
 
 `shared_token` and `controller_secret` must be generated per deployment. URL
 values may contain credentials and must be treated as secrets. The upstream
