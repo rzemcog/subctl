@@ -34,6 +34,7 @@ class PublicConfig:
 class RenderConfig:
     profile_update_interval_seconds: int
     provider_update_interval_seconds: int
+    provider_download_proxy: str
     healthcheck_url: str
     healthcheck_interval_seconds: int
     healthcheck_timeout_milliseconds: int
@@ -156,6 +157,10 @@ def load_config(
             provider_update_interval_seconds=_positive_int(
                 render_data["provider_update_interval_seconds"],
                 "render.provider_update_interval_seconds",
+            ),
+            provider_download_proxy=_proxy_target(
+                render_data.get("provider_download_proxy", "DIRECT"),
+                "render.provider_download_proxy",
             ),
             healthcheck_url=healthcheck_url,
             healthcheck_interval_seconds=_positive_int(
@@ -326,6 +331,7 @@ _SETTINGS_RENDER_FIELDS = {
     "healthcheck_tolerance_milliseconds",
     "healthcheck_lazy",
     "provider_exclude_keywords",
+    "provider_download_proxy",
 }
 _SETTINGS_COMPOSITION_FIELDS = {
     "include_private",
@@ -363,6 +369,11 @@ def validate_settings_overlay(value: Any) -> dict[str, Any]:
         if unknown:
             raise ValidationError(f"UI settings render contains unsupported field(s): {', '.join(unknown)}")
         result_render = {key: deepcopy(render[key]) for key in render if key in _SETTINGS_RENDER_FIELDS}
+        if "provider_download_proxy" in result_render:
+            result_render["provider_download_proxy"] = _proxy_target(
+                result_render["provider_download_proxy"],
+                "render.provider_download_proxy",
+            )
         composition = render.get("composition")
         if composition is not None:
             if not isinstance(composition, dict):
@@ -393,6 +404,15 @@ def _composition_value(render_data: dict[str, Any], key: str, default: Any) -> A
     if isinstance(composition, dict) and key in composition:
         return composition[key]
     return render_data.get(key, default)
+
+
+def _proxy_target(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValidationError(f"{field} must be a Mihomo outbound or group name")
+    target = value.strip()
+    if not target or len(target) > 128 or any(ord(char) < 32 or ord(char) == 127 for char in target):
+        raise ValidationError(f"{field} must be a non-empty Mihomo outbound or group name up to 128 characters")
+    return target
 
 
 def _prefix(value: Any, field: str) -> str:

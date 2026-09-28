@@ -13,6 +13,7 @@ proxy-providers:
   provider:
     type: http
     url: https://sub.example.com/feeds/provider/provider_shared_token_1234567890abcd
+    proxy: DIRECT
     interval: 900
     path: ./providers/provider.yaml
     exclude-filter: (?i)(?:Киев|Москва)

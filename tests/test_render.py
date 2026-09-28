@@ -84,6 +84,7 @@ def test_render_rules_and_fallback_order(config_path, users_path):
     assert parsed["proxy-providers"]["provider"]["exclude-filter"] == (
         "(?i)(?:Киев|Москва)"
     )
+    assert parsed["proxy-providers"]["provider"]["proxy"] == "DIRECT"
 
     for provider in parsed["proxy-providers"].values():
         assert provider["health-check"]["timeout"] == 3000
@@ -92,6 +93,33 @@ def test_render_rules_and_fallback_order(config_path, users_path):
     rules = parsed["rules"]
     assert rules[-1] == "MATCH,BASE"
     assert all(",DIRECT" in rule for rule in rules[:-1])
+
+
+def test_render_provider_download_proxy_is_configurable(
+    config_data, write_yaml, users_path
+):
+    config_data["render"]["provider_download_proxy"] = "PROXY"
+    config_path = write_yaml("provider-proxy-config.yaml", config_data)
+    config = load_config(config_path)
+    registry = load_users(users_path)
+
+    parsed = yaml.safe_load(render_user_yaml(config, registry.users["alice"]))
+
+    assert parsed["proxy-providers"]["provider"]["proxy"] == "PROXY"
+
+
+def test_render_provider_download_proxy_can_be_overridden_by_settings(
+    config_path, users_path
+):
+    config = load_config(
+        config_path,
+        settings_override={"render": {"provider_download_proxy": "PRIVATE"}},
+    )
+    registry = load_users(users_path)
+
+    parsed = yaml.safe_load(render_user_yaml(config, registry.users["alice"]))
+
+    assert parsed["proxy-providers"]["provider"]["proxy"] == "PRIVATE"
 
 
 def test_render_users_writes_to_user_token_filenames(config_path, users_path, tmp_path):

@@ -280,6 +280,7 @@ def _build_profile(
         providers["provider"] = {
             "type": "http",
             "url": provider_url,
+            "proxy": config.render.provider_download_proxy,
             "interval": config.render.provider_update_interval_seconds,
             "path": "./providers/provider.yaml",
             **({"exclude-filter": exclude_filter} if exclude_filter else {}),
