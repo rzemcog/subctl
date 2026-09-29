@@ -9,6 +9,15 @@ from subctl.service import SubscriptionService
 
 def _config(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     state = tmp_path / "state"
+    cache = state / "cache" / "provider.decoded"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(
+        "vless://123e4567-e89b-12d3-a456-426614174000@seed.example.net:443"
+        "?encryption=none&flow=xtls-rprx-vision&fp=chrome&headerType=none"
+        "&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&security=reality&sid=0123456789abcdef"
+        "&sni=seed.example.net&type=tcp#fixture-seed\n",
+        encoding="utf-8",
+    )
     output = tmp_path / "public"
     users = tmp_path / "users.yaml"
     config = tmp_path / "config.yaml"
@@ -117,6 +126,8 @@ def test_settings_overlay_is_versioned_and_applies_to_effective_config(tmp_path:
     preview = service.preview_settings({}, user_name=user.name)
     assert preview["secrets_hidden"] is True
     assert "panel.example/sub/alice" not in preview["yaml"]
+    assert "123e4567-e89b-12d3-a456-426614174000" not in preview["yaml"]
+    assert "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" not in preview["yaml"]
 
     rolled_back = service.rollback_settings(1)
     assert rolled_back["version"] == 2

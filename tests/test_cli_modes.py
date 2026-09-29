@@ -43,12 +43,12 @@ def test_render_default_all_and_user_mode(
     assert_secret_not_printed(result, VALID_ALICE_TOKEN, VALID_PROVIDER_TOKEN)
 
 
-def test_render_yaml_only_does_not_require_provider_cache(cli_paths, tmp_path, run_subctl):
+def test_render_yaml_only_requires_provider_seed_cache(cli_paths, tmp_path, run_subctl):
     result = run_subctl(*cli_paths, "render", "--yaml-only")
 
-    assert result.returncode == 0, result.stderr
-    assert "render summary: rendered=2 skipped=2 failed=0" in result.stdout
-    assert (tmp_path / "public/s" / f"{VALID_ALICE_TOKEN}.yaml").exists()
+    assert result.returncode == 3
+    assert "provider cache is missing" in result.stderr
+    assert not (tmp_path / "public/s" / f"{VALID_ALICE_TOKEN}.yaml").exists()
     assert not (tmp_path / "public/s" / f"{VALID_ALICE_TOKEN}.raw").exists()
 
 
