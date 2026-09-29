@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import grp
 import ipaddress
 import json
@@ -291,8 +292,20 @@ def _build_profile(
     }
     exclude_filter = _provider_exclude_filter(config.render.provider_exclude_keywords)
     providers: dict[str, dict] = {}
+    bootstrap_seed_proxies: list[dict] = []
     groups: list[dict] = []
     available_groups: list[str] = []
+
+    if resilient_provider_routes and config.render.include_provider:
+        if seed_snapshot is None:
+            raise ValidationError("provider SEED snapshot is required for the public profile")
+        for proxy in seed_snapshot.proxies:
+            bootstrap_proxy = copy.deepcopy(proxy)
+            proxy_name = str(bootstrap_proxy.get("name", ""))
+            if proxy_name.startswith("SEED | "):
+                proxy_name = proxy_name[len("SEED | ") :]
+            bootstrap_proxy["name"] = f"BOOTSTRAP-SEED | {proxy_name}"
+            bootstrap_seed_proxies.append(bootstrap_proxy)
 
     if config.render.include_private:
         providers["private"] = {
@@ -307,12 +320,21 @@ def _build_profile(
             "path": "./providers/private.yaml",
             "health-check": dict(health_check),
         }
-        groups.append({"name": "PRIVATE", "type": "select", "use": ["private"]})
+        groups.append(
+            {
+                "name": "PRIVATE",
+                "type": "select",
+                "use": ["private"],
+                **(
+                    {"empty-fallback": "REJECT"}
+                    if resilient_provider_routes and config.render.include_provider
+                    else {}
+                ),
+            }
+        )
         available_groups.append("PRIVATE")
 
     if config.render.include_provider:
-        if resilient_provider_routes and seed_snapshot is None:
-            raise ValidationError("provider SEED snapshot is required for the public profile")
         providers["provider"] = {
             "type": "http",
             "url": provider_url,
@@ -347,7 +369,7 @@ def _build_profile(
         if resilient_provider_routes:
             providers["provider-seed"] = {
                 "type": "inline",
-                "payload": [dict(proxy) for proxy in seed_snapshot.proxies],
+                "payload": [copy.deepcopy(proxy) for proxy in seed_snapshot.proxies],
                 "health-check": dict(health_check),
             }
             groups.append(
@@ -368,6 +390,7 @@ def _build_profile(
                     "type": "url-test",
                     "include-all-providers": True,
                     "filter": "^LIVE ",
+                    "empty-fallback": "REJECT",
                     "url": config.render.healthcheck_url,
                     "interval": config.render.healthcheck_interval_seconds,
                     "timeout": config.render.healthcheck_timeout_milliseconds,
@@ -449,13 +472,24 @@ def _build_profile(
     if resilient_provider_routes:
         fetch_groups: list[dict] = []
         if config.render.include_provider:
-            private_recovery = ["AUTO-PROVIDER-SEED", "DIRECT"]
+            bootstrap_seed_names = [
+                str(proxy["name"]) for proxy in bootstrap_seed_proxies
+            ]
+            private_recovery = [*bootstrap_seed_names, "DIRECT"]
             if config.render.include_private:
                 fetch_groups.append(
                     {
                         "name": "FETCH-PRIVATE",
                         "type": "fallback",
                         "proxies": private_recovery,
+                        **(
+                            {
+                                "default-selected": bootstrap_seed_names[0],
+                                "empty-fallback": bootstrap_seed_names[0],
+                            }
+                            if bootstrap_seed_names
+                            else {}
+                        ),
                         "url": config.render.healthcheck_url,
                         "interval": config.render.healthcheck_interval_seconds,
                         "timeout": config.render.healthcheck_timeout_milliseconds,
@@ -466,7 +500,7 @@ def _build_profile(
                 )
             live_recovery = [
                 *( ["PRIVATE"] if config.render.include_private else [] ),
-                "AUTO-PROVIDER-SEED",
+                *bootstrap_seed_names,
                 "DIRECT",
             ]
             fetch_groups.append(
@@ -474,6 +508,14 @@ def _build_profile(
                     "name": "FETCH-AUTO-PROVIDER",
                     "type": "fallback",
                     "proxies": live_recovery,
+                    **(
+                        {
+                            "default-selected": bootstrap_seed_names[0],
+                            "empty-fallback": bootstrap_seed_names[0],
+                        }
+                        if bootstrap_seed_names
+                        else {}
+                    ),
                     "url": config.render.healthcheck_url,
                     "interval": config.render.healthcheck_interval_seconds,
                     "timeout": config.render.healthcheck_timeout_milliseconds,
@@ -487,6 +529,7 @@ def _build_profile(
         groups.extend(internal_groups)
     return {
         "proxy-providers": providers,
+        **({"proxies": bootstrap_seed_proxies} if bootstrap_seed_proxies else {}),
         "proxy-groups": groups,
         "rules": [
             "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",

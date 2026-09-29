@@ -1,0 +1,90 @@
+{
+  "kind": "intent",
+  "schema_version": "0.1",
+  "id": "intent-seed-live-recovery",
+  "title": "Reliable SEED and LIVE provider recovery",
+  "problem": "When a provider has no usable nodes, Mihomo can treat its default COMPATIBLE fallback as direct and stop before the configured recovery route. Users then cannot reliably start from SEED or recover a missing LIVE provider.",
+  "outcome": "Generated profiles keep the existing PROVIDER-AUTO name, select healthy LIVE nodes when available, fall back to SEED when LIVE is empty or unavailable, and fetch LIVE in the order PRIVATE, SEED, then DIRECT while retaining a usable cached LIVE provider after failed updates.",
+  "actors": [
+    {
+      "name": "Profile user",
+      "responsibility": "Receive a valid profile and working proxy route during normal operation and recovery."
+    },
+    {
+      "name": "Service operator",
+      "responsibility": "Publish recoverable provider profiles and verify the deployed runtime behavior."
+    }
+  ],
+  "in_scope": [
+    "Preserve the public PROVIDER-AUTO group name and healthy LIVE preference.",
+    "Make empty PRIVATE and LIVE groups unavailable to fallback selection so the declared SEED recovery paths can run.",
+    "Preserve the PRIVATE to SEED to DIRECT provider fetch order and the existing LIVE cache on failed updates.",
+    "Correct the test-client dependency that causes the Starlette deprecation warning and verify the patch through tests, build, Mihomo, and deployment checks."
+  ],
+  "out_of_scope": [
+    "Changing Cloudflare configuration or security policy without separate authorization.",
+    "Renaming public groups or redesigning the existing SEED/LIVE provider architecture."
+  ],
+  "invariants": [
+    {
+      "id": "I1",
+      "claim": "The public provider group remains named PROVIDER-AUTO.",
+      "enforcement": "Profile rendering assertions and the published profile inspection verify the exact group name."
+    },
+    {
+      "id": "I2",
+      "claim": "An empty PRIVATE selector or LIVE selector cannot become an implicit COMPATIBLE route that short-circuits recovery.",
+      "enforcement": "Generated resilient profiles set empty-fallback to REJECT on PRIVATE and AUTO-PROVIDER-LIVE; regression tests and real Mihomo probes verify that selection advances to SEED."
+    },
+    {
+      "id": "I3",
+      "claim": "Provider downloads try PRIVATE, then SEED, then DIRECT without recursion.",
+      "enforcement": "Generated group ordering is asserted and isolated runtime tests exercise the route."
+    },
+    {
+      "id": "I4",
+      "claim": "A failed LIVE update does not remove a previously usable LIVE cache.",
+      "enforcement": "Provider service tests and isolated runtime verification check cache retention after an update error."
+    },
+    {
+      "id": "I5",
+      "claim": "No Cloudflare configuration is changed as part of this recovery patch.",
+      "enforcement": "Deployment and troubleshooting remain limited to the authorized application and origin paths."
+    },
+    {
+      "id": "I6",
+      "claim": "Bootstrap SEED nodes are available independently of HTTP provider initialization order, while the inline SEED provider remains the source for runtime selection.",
+      "enforcement": "Generated top-level bootstrap proxies, startup default selection, and fetch-route references are asserted, and an isolated Mihomo cold-start verifies the LIVE download route uses SEED."
+    }
+  ],
+  "failure_model": [
+    {
+      "failure": "LIVE is absent, empty, or unhealthy during startup.",
+      "response": "Reject the empty LIVE group and select the usable SEED group."
+    },
+    {
+      "failure": "PRIVATE has no usable nodes.",
+      "response": "Reject the empty PRIVATE group so fallback can proceed to SEED and then DIRECT."
+    },
+    {
+      "failure": "An HTTP provider starts before the inline SEED provider is initialized.",
+      "response": "Use generated top-level bootstrap copies as the fetch groups' default-selected and empty-fallback proxy while retaining the inline provider for normal runtime group selection."
+    },
+    {
+      "failure": "A LIVE provider refresh fails after a valid cache exists.",
+      "response": "Retain the existing cached LIVE provider and keep it available for later selection."
+    },
+    {
+      "failure": "The public edge returns response headers but does not deliver a body.",
+      "response": "Record the feed and client checks as unverified and leave Cloudflare settings untouched absent separate authorization."
+    }
+  ],
+  "acceptance_signals": [
+    "The complete backend suite passes without the Starlette TestClient warning in the development environment.",
+    "The frontend build, generated profile checks, and Mihomo validation pass.",
+    "Runtime probes show LIVE when healthy, SEED when LIVE is empty or unhealthy, and the PRIVATE to SEED to DIRECT fetch order.",
+    "A failed LIVE refresh preserves the previous usable cache.",
+    "The pushed and deployed commit is verified by SHA, and published-feed and local-client results are recorded from actual responses and traffic."
+  ],
+  "open_questions": []
+}

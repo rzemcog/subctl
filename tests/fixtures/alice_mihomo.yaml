@@ -53,11 +53,27 @@ proxy-providers:
       interval: 15
       timeout: 3000
       lazy: true
+proxies:
+- name: BOOTSTRAP-SEED | fixture-seed
+  type: vless
+  server: seed.example.net
+  port: 443
+  uuid: 123e4567-e89b-12d3-a456-426614174000
+  network: tcp
+  encryption: ''
+  flow: xtls-rprx-vision
+  tls: true
+  servername: seed.example.net
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    short-id: 0123456789abcdef
 proxy-groups:
 - name: PRIVATE
   type: select
   use:
   - private
+  empty-fallback: REJECT
 - name: PROVIDER-AUTO
   type: fallback
   proxies:
@@ -94,6 +110,7 @@ proxy-groups:
   type: url-test
   include-all-providers: true
   filter: '^LIVE '
+  empty-fallback: REJECT
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000
@@ -115,8 +132,10 @@ proxy-groups:
 - name: FETCH-PRIVATE
   type: fallback
   proxies:
-  - AUTO-PROVIDER-SEED
+  - BOOTSTRAP-SEED | fixture-seed
   - DIRECT
+  default-selected: BOOTSTRAP-SEED | fixture-seed
+  empty-fallback: BOOTSTRAP-SEED | fixture-seed
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000
@@ -127,8 +146,10 @@ proxy-groups:
   type: fallback
   proxies:
   - PRIVATE
-  - AUTO-PROVIDER-SEED
+  - BOOTSTRAP-SEED | fixture-seed
   - DIRECT
+  default-selected: BOOTSTRAP-SEED | fixture-seed
+  empty-fallback: BOOTSTRAP-SEED | fixture-seed
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000

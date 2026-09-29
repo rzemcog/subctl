@@ -65,6 +65,7 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
 
     groups = {group["name"]: group for group in parsed["proxy-groups"]}
     assert groups["PRIVATE"]["use"] == ["private"]
+    assert groups["PRIVATE"]["empty-fallback"] == "REJECT"
     assert groups["PROVIDER-AUTO"]["type"] == "fallback"
     assert groups["PROVIDER-AUTO"]["proxies"] == [
         "AUTO-PROVIDER-LIVE",
@@ -76,17 +77,25 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
     assert groups["AUTO-PROVIDER-LIVE"]["timeout"] == 3000
     assert groups["AUTO-PROVIDER-LIVE"]["max-failed-times"] == 2
     assert groups["AUTO-PROVIDER-LIVE"]["tolerance"] == 50
+    assert groups["AUTO-PROVIDER-LIVE"]["empty-fallback"] == "REJECT"
     assert groups["AUTO-PROVIDER-LIVE"]["lazy"] is True
     assert groups["AUTO-PROVIDER-SEED"]["include-all-providers"] is True
     assert groups["AUTO-PROVIDER-SEED"]["filter"] == "^SEED "
     assert groups["AUTO-PROVIDER-SEED"]["tolerance"] == 50
     assert groups["AUTO-PROVIDER-SEED"]["hidden"] is True
-    assert groups["FETCH-PRIVATE"]["proxies"] == ["AUTO-PROVIDER-SEED", "DIRECT"]
-    assert groups["FETCH-AUTO-PROVIDER"]["proxies"] == [
-        "PRIVATE",
-        "AUTO-PROVIDER-SEED",
+    assert groups["FETCH-PRIVATE"]["proxies"] == [
+        "BOOTSTRAP-SEED | fixture-seed",
         "DIRECT",
     ]
+    assert groups["FETCH-PRIVATE"]["default-selected"] == "BOOTSTRAP-SEED | fixture-seed"
+    assert groups["FETCH-PRIVATE"]["empty-fallback"] == "BOOTSTRAP-SEED | fixture-seed"
+    assert groups["FETCH-AUTO-PROVIDER"]["proxies"] == [
+        "PRIVATE",
+        "BOOTSTRAP-SEED | fixture-seed",
+        "DIRECT",
+    ]
+    assert groups["FETCH-AUTO-PROVIDER"]["default-selected"] == "BOOTSTRAP-SEED | fixture-seed"
+    assert groups["FETCH-AUTO-PROVIDER"]["empty-fallback"] == "BOOTSTRAP-SEED | fixture-seed"
     assert groups["FETCH-PRIVATE"]["hidden"] is True
     assert groups["FETCH-AUTO-PROVIDER"]["hidden"] is True
     assert groups["AUTO"]["type"] == "fallback"
@@ -118,6 +127,8 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
     seed_node = parsed["proxy-providers"]["provider-seed"]["payload"][0]
     assert seed_node["type"] == "vless"
     assert seed_node["server"] == "seed.example.net"
+    assert parsed["proxies"][0]["name"] == "BOOTSTRAP-SEED | fixture-seed"
+    assert parsed["proxies"][0]["server"] == "seed.example.net"
     assert seed_node["reality-opts"] == {
         "public-key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "short-id": "0123456789abcdef",
