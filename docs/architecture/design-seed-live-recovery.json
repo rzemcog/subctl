@@ -1,0 +1,133 @@
+{
+  "kind": "design",
+  "schema_version": "0.1",
+  "id": "design-seed-live-recovery",
+  "derived_from": "intent-seed-live-recovery",
+  "modules": [
+    {
+      "name": "Recovery profile topology",
+      "responsibility": "Render public provider groups and ordered fallback paths, including empty-group behavior and a selected bootstrap proxy before HTTP providers initialize.",
+      "interface": "Produce a deterministic client profile that keeps an inline SEED provider for runtime selection, exposes bootstrap SEED nodes independently of HTTP provider load order, prefers healthy LIVE, and keeps PRIVATE to SEED to DIRECT fetch order after startup.",
+      "seam": "Parsed top-level bootstrap proxy references and actual Mihomo startup and group-selection behavior."
+    },
+    {
+      "name": "Provider seed and cache lifecycle",
+      "responsibility": "Provide validated bootstrap nodes and retain the last usable LIVE cache when an update fails.",
+      "interface": "Supply the immutable SEED snapshot and apply successful LIVE updates while preserving existing data on failure.",
+      "seam": "Seed snapshot construction and provider refresh error handling."
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Public profile rendering",
+      "owner": "Recovery profile topology",
+      "operations": ["render resilient provider groups", "render fetch fallback order"],
+      "errors": ["missing required SEED snapshot", "invalid profile configuration"],
+      "idempotency": "Rendering the same inputs produces the same profile topology and group names."
+    },
+    {
+      "name": "Provider update lifecycle",
+      "owner": "Provider seed and cache lifecycle",
+      "operations": ["load SEED snapshot", "refresh LIVE provider", "retain cached LIVE provider after failure"],
+      "errors": ["invalid seed node", "upstream provider failure"],
+      "idempotency": "A repeated failed refresh leaves the previously stored LIVE provider unchanged."
+    }
+  ],
+  "state_machines": [
+    {
+      "name": "Client provider selection",
+      "states": ["LIVE", "SEED", "DIRECT", "UNAVAILABLE"],
+      "transitions": [
+        {
+          "from": "LIVE",
+          "event": "LIVE becomes empty or unhealthy",
+          "to": "SEED",
+          "guard": "A SEED node is available.",
+          "action": "Reject an empty LIVE selection and use the next usable provider group."
+        },
+        {
+          "from": "LIVE",
+          "event": "LIVE becomes empty or unhealthy without SEED",
+          "to": "UNAVAILABLE",
+          "guard": "No SEED node is available.",
+          "action": "Do not report a false LIVE route."
+        },
+        {
+          "from": "SEED",
+          "event": "LIVE returns healthy",
+          "to": "LIVE",
+          "guard": "At least one LIVE node passes the configured health check.",
+          "action": "Prefer the restored LIVE provider."
+        },
+        {
+          "from": "SEED",
+          "event": "Provider fetch requires the final fallback",
+          "to": "DIRECT",
+          "guard": "PRIVATE and SEED are unavailable for the provider request.",
+          "action": "Attempt the configured direct provider fetch."
+        }
+      ]
+    },
+    {
+      "name": "LIVE provider cache",
+      "states": ["CACHED_USABLE", "UPDATE_FAILED", "CACHED_USABLE_AFTER_FAILURE", "UPDATED"],
+      "transitions": [
+        {
+          "from": "CACHED_USABLE",
+          "event": "provider update fails",
+          "to": "CACHED_USABLE_AFTER_FAILURE",
+          "guard": "A valid LIVE cache exists before the update.",
+          "action": "Keep the old provider content available."
+        },
+        {
+          "from": "CACHED_USABLE_AFTER_FAILURE",
+          "event": "provider update succeeds",
+          "to": "UPDATED",
+          "guard": "The new provider response validates successfully.",
+          "action": "Replace the old provider content with the validated response."
+        }
+      ]
+    }
+  ],
+  "failure_handling": [
+    {
+      "failure": "PRIVATE or LIVE has no nodes.",
+      "response": "Set its empty fallback to REJECT so the containing fallback can continue to the next declared group."
+    },
+    {
+      "failure": "A LIVE provider refresh fails.",
+      "response": "Leave the previous cache intact and report the update failure through existing service behavior."
+    },
+    {
+      "failure": "Published edge or client traffic cannot be verified.",
+      "response": "Report the exact incomplete evidence and do not claim successful production recovery."
+    }
+  ],
+  "traceability": [
+    {
+      "intent_ref": "I1",
+      "design_refs": ["Recovery profile topology", "Public profile rendering"]
+    },
+    {
+      "intent_ref": "I2",
+      "design_refs": ["Recovery profile topology", "Client provider selection"]
+    },
+    {
+      "intent_ref": "I3",
+      "design_refs": ["Recovery profile topology", "Public profile rendering"]
+    },
+    {
+      "intent_ref": "I4",
+      "design_refs": ["Provider seed and cache lifecycle", "LIVE provider cache"]
+    },
+    {
+      "intent_ref": "I5",
+      "design_refs": ["failure_handling"]
+    },
+    {
+      "intent_ref": "I6",
+      "design_refs": ["Recovery profile topology", "Public profile rendering"]
+    }
+  ],
+  "open_questions": []
+}
