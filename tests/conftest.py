@@ -11,6 +11,12 @@ VALID_PROVIDER_TOKEN = "provider_shared_token_1234567890abcd"
 VALID_ALICE_TOKEN = "alice_token_1234567890abcdefghijkl"
 VALID_BOB_TOKEN = "bob_token_1234567890abcdefghijklmn"
 VALID_CAROL_TOKEN = "carol_token_1234567890abcdefghijkl"
+SEED_URI = (
+    "vless://123e4567-e89b-12d3-a456-426614174000@seed.example.net:443"
+    "?encryption=none&flow=xtls-rprx-vision&fp=chrome&headerType=none"
+    "&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&security=reality&sid=0123456789abcdef"
+    "&sni=seed.example.net&type=tcp#fixture-seed"
+)
 
 
 @pytest.fixture
@@ -90,6 +96,22 @@ def write_yaml(tmp_path):
 @pytest.fixture
 def config_path(write_yaml, config_data):
     return write_yaml("config.yaml", config_data)
+
+
+@pytest.fixture
+def provider_state_dir(tmp_path):
+    state_dir = tmp_path / "state"
+    cache = state_dir / "cache" / "provider.decoded"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(SEED_URI + "\n", encoding="utf-8")
+    return state_dir
+
+
+@pytest.fixture
+def profile_config(config_path, provider_state_dir):
+    from subctl.config import load_config
+
+    return load_config(config_path, state_dir=provider_state_dir)
 
 
 @pytest.fixture

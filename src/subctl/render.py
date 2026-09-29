@@ -22,6 +22,7 @@ from .errors import RenderError, UpstreamError, ValidationError
 from .provider import validate_provider_subscription
 from .public_files import PUBLIC_FILE_MODE, ensure_public_directory
 from .registry import User, UserRegistry
+from .seed import ProviderSeedSnapshot, load_provider_seed
 
 DEFAULT_PERSONAL_FETCH_TIMEOUT_SECONDS = 20
 PRIVATE_PREFIX = "PRIVATE | "
@@ -86,17 +87,43 @@ def yaml_output_path(config: AppConfig, user: User) -> Path:
 
 
 def render_user_yaml(config: AppConfig, user: User) -> str:
-    return yaml.safe_dump(build_mihomo_profile(config, user), sort_keys=False, allow_unicode=True)
+    profile, seed = _build_user_profile(config, user)
+    rendered = yaml.safe_dump(profile, sort_keys=False, allow_unicode=True)
+    if seed is None:
+        return rendered
+    seed_source_time = seed.source_updated_at or "unknown"
+    return (
+        f"# subctl-seed-generated-at: {seed.generated_at}\n"
+        f"# subctl-seed-source-updated-at: {seed_source_time}\n"
+        f"# subctl-seed-node-count: {len(seed.proxies)}\n"
+        + rendered
+    )
 
 
 def build_mihomo_profile(config: AppConfig, user: User) -> dict:
+    return _build_user_profile(config, user)[0]
+
+
+def _build_user_profile(
+    config: AppConfig, user: User
+) -> tuple[dict, ProviderSeedSnapshot | None]:
     provider_url = f"{config.public.base_url}/feeds/provider/{config.provider.shared_token}"
+    seed = (
+        load_provider_seed(
+            config.state_dir / "cache" / "provider.decoded",
+            config.render.provider_exclude_keywords,
+        )
+        if config.render.include_provider
+        else None
+    )
     return _build_profile(
         config,
         private_url=user.xui_subscription,
         provider_url=provider_url,
         base_default="DIRECT",
-    )
+        seed_snapshot=seed,
+        resilient_provider_routes=True,
+    ), seed
 
 
 def build_gateway_profile(
@@ -252,6 +279,8 @@ def _build_profile(
     private_url: str,
     provider_url: str,
     base_default: str,
+    seed_snapshot: ProviderSeedSnapshot | None = None,
+    resilient_provider_routes: bool = False,
 ) -> dict:
     health_check = {
         "enable": True,
@@ -269,6 +298,11 @@ def _build_profile(
         providers["private"] = {
             "type": "http",
             "url": private_url,
+            **(
+                {"proxy": "FETCH-PRIVATE"}
+                if resilient_provider_routes and config.render.include_provider
+                else {}
+            ),
             "interval": config.render.profile_update_interval_seconds,
             "path": "./providers/private.yaml",
             "health-check": dict(health_check),
@@ -277,29 +311,104 @@ def _build_profile(
         available_groups.append("PRIVATE")
 
     if config.render.include_provider:
+        if resilient_provider_routes and seed_snapshot is None:
+            raise ValidationError("provider SEED snapshot is required for the public profile")
         providers["provider"] = {
             "type": "http",
             "url": provider_url,
-            "proxy": config.render.provider_download_proxy,
+            "proxy": (
+                "FETCH-AUTO-PROVIDER"
+                if resilient_provider_routes
+                else config.render.provider_download_proxy
+            ),
             "interval": config.render.provider_update_interval_seconds,
             "path": "./providers/provider.yaml",
             **({"exclude-filter": exclude_filter} if exclude_filter else {}),
             "health-check": dict(health_check),
+            **(
+                {"override": {"additional-prefix": "LIVE | "}}
+                if resilient_provider_routes
+                else {}
+            ),
+            **(
+                {
+                    "header": {
+                        "User-Agent": [
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/154.0.0.0 Safari/537.36"
+                        ]
+                    }
+                }
+                if resilient_provider_routes
+                else {}
+            ),
         }
-        groups.append(
-            {
-                "name": "PROVIDER-AUTO",
-                "type": "url-test",
-                "use": ["provider"],
-                "url": config.render.healthcheck_url,
-                "interval": config.render.healthcheck_interval_seconds,
-                "timeout": config.render.healthcheck_timeout_milliseconds,
-                "max-failed-times": config.render.healthcheck_max_failed_times,
-                "tolerance": config.render.healthcheck_tolerance_milliseconds,
-                "lazy": config.render.healthcheck_lazy,
+        if resilient_provider_routes:
+            providers["provider-seed"] = {
+                "type": "inline",
+                "payload": [dict(proxy) for proxy in seed_snapshot.proxies],
+                "health-check": dict(health_check),
             }
-        )
-        available_groups.append("PROVIDER-AUTO")
+            groups.append(
+                {
+                    "name": "PROVIDER-AUTO",
+                    "type": "fallback",
+                    "proxies": ["AUTO-PROVIDER-LIVE", "AUTO-PROVIDER-SEED"],
+                    "url": config.render.healthcheck_url,
+                    "interval": config.render.healthcheck_interval_seconds,
+                    "timeout": config.render.healthcheck_timeout_milliseconds,
+                    "max-failed-times": config.render.healthcheck_max_failed_times,
+                    "lazy": config.render.healthcheck_lazy,
+                }
+            )
+            internal_groups = [
+                {
+                    "name": "AUTO-PROVIDER-LIVE",
+                    "type": "url-test",
+                    "include-all-providers": True,
+                    "filter": "^LIVE ",
+                    "url": config.render.healthcheck_url,
+                    "interval": config.render.healthcheck_interval_seconds,
+                    "timeout": config.render.healthcheck_timeout_milliseconds,
+                    "max-failed-times": config.render.healthcheck_max_failed_times,
+                    "tolerance": config.render.healthcheck_tolerance_milliseconds,
+                    "lazy": config.render.healthcheck_lazy,
+                    "hidden": True,
+                },
+                {
+                    "name": "AUTO-PROVIDER-SEED",
+                    "type": "url-test",
+                    "include-all-providers": True,
+                    "filter": "^SEED ",
+                    "url": config.render.healthcheck_url,
+                    "interval": config.render.healthcheck_interval_seconds,
+                    "timeout": config.render.healthcheck_timeout_milliseconds,
+                    "max-failed-times": config.render.healthcheck_max_failed_times,
+                    "tolerance": config.render.healthcheck_tolerance_milliseconds,
+                    "lazy": config.render.healthcheck_lazy,
+                    "hidden": True,
+                },
+            ]
+            available_groups.append("PROVIDER-AUTO")
+        else:
+            groups.append(
+                {
+                    "name": "PROVIDER-AUTO",
+                    "type": "url-test",
+                    "use": ["provider"],
+                    "url": config.render.healthcheck_url,
+                    "interval": config.render.healthcheck_interval_seconds,
+                    "timeout": config.render.healthcheck_timeout_milliseconds,
+                    "max-failed-times": config.render.healthcheck_max_failed_times,
+                    "tolerance": config.render.healthcheck_tolerance_milliseconds,
+                    "lazy": config.render.healthcheck_lazy,
+                }
+            )
+            available_groups.append("PROVIDER-AUTO")
+            internal_groups = []
+    else:
+        internal_groups = []
 
     if config.render.provider_first:
         available_groups.sort(key=lambda value: 0 if value == "PROVIDER-AUTO" else 1)
@@ -337,6 +446,45 @@ def _build_profile(
             },
         ]
     )
+    if resilient_provider_routes:
+        fetch_groups: list[dict] = []
+        if config.render.include_provider:
+            private_recovery = ["AUTO-PROVIDER-SEED", "DIRECT"]
+            if config.render.include_private:
+                fetch_groups.append(
+                    {
+                        "name": "FETCH-PRIVATE",
+                        "type": "fallback",
+                        "proxies": private_recovery,
+                        "url": config.render.healthcheck_url,
+                        "interval": config.render.healthcheck_interval_seconds,
+                        "timeout": config.render.healthcheck_timeout_milliseconds,
+                        "max-failed-times": config.render.healthcheck_max_failed_times,
+                        "lazy": config.render.healthcheck_lazy,
+                        "hidden": True,
+                    }
+                )
+            live_recovery = [
+                *( ["PRIVATE"] if config.render.include_private else [] ),
+                "AUTO-PROVIDER-SEED",
+                "DIRECT",
+            ]
+            fetch_groups.append(
+                {
+                    "name": "FETCH-AUTO-PROVIDER",
+                    "type": "fallback",
+                    "proxies": live_recovery,
+                    "url": config.render.healthcheck_url,
+                    "interval": config.render.healthcheck_interval_seconds,
+                    "timeout": config.render.healthcheck_timeout_milliseconds,
+                    "max-failed-times": config.render.healthcheck_max_failed_times,
+                    "lazy": config.render.healthcheck_lazy,
+                    "hidden": True,
+                }
+            )
+        groups.extend([*internal_groups, *fetch_groups])
+    elif internal_groups:
+        groups.extend(internal_groups)
     return {
         "proxy-providers": providers,
         "proxy-groups": groups,

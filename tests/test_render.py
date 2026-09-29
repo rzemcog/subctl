@@ -2,25 +2,32 @@ import stat
 
 import yaml
 
-from conftest import VALID_ALICE_TOKEN, VALID_BOB_TOKEN, VALID_PROVIDER_TOKEN
+from conftest import SEED_URI, VALID_ALICE_TOKEN, VALID_BOB_TOKEN, VALID_PROVIDER_TOKEN
 from subctl.config import load_config
 from subctl.registry import load_users
-from subctl.render import render_user_yaml, render_users
+from subctl.render import build_mihomo_profile, render_user_yaml, render_users
 
 
-def test_render_user_yaml_matches_golden_snapshot(config_path, users_path):
-    config = load_config(config_path)
+def test_render_user_yaml_matches_golden_snapshot(profile_config, users_path):
+    config = profile_config
     registry = load_users(users_path)
 
     actual = render_user_yaml(config, registry.users["alice"])
     expected = _fixture("alice_mihomo.yaml")
 
-    assert actual == expected
+    lines = actual.splitlines()
+    assert lines[0].startswith("# subctl-seed-generated-at: ")
+    assert lines[1].startswith("# subctl-seed-source-updated-at: ")
+    assert lines[2] == "# subctl-seed-node-count: 1"
+    assert "\n".join(lines[3:]) + "\n" == expected
 
 
 def test_render_command_writes_parseable_yaml_for_multiple_users(
     run_subctl, cli_paths, tmp_path
 ):
+    cache = tmp_path / "state" / "cache" / "provider.decoded"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(SEED_URI + "\n", encoding="utf-8")
     result = run_subctl(*cli_paths, "render", "--yaml-only")
 
     assert result.returncode == 0, result.stderr
@@ -40,8 +47,8 @@ def test_render_command_writes_parseable_yaml_for_multiple_users(
     assert alice_path.read_text(encoding="utf-8") != bob_path.read_text(encoding="utf-8")
 
 
-def test_render_yaml_does_not_include_upstream_provider_url(config_path, users_path):
-    config = load_config(config_path)
+def test_render_yaml_does_not_include_upstream_provider_url(profile_config, users_path):
+    config = profile_config
     registry = load_users(users_path)
 
     output = render_user_yaml(config, registry.users["alice"])
@@ -50,21 +57,38 @@ def test_render_yaml_does_not_include_upstream_provider_url(config_path, users_p
     assert VALID_PROVIDER_TOKEN in output
 
 
-def test_render_rules_and_fallback_order(config_path, users_path):
-    config = load_config(config_path)
+def test_render_rules_and_fallback_order(profile_config, users_path):
+    config = profile_config
     registry = load_users(users_path)
 
     parsed = yaml.safe_load(render_user_yaml(config, registry.users["alice"]))
 
     groups = {group["name"]: group for group in parsed["proxy-groups"]}
     assert groups["PRIVATE"]["use"] == ["private"]
-    assert groups["PROVIDER-AUTO"]["type"] == "url-test"
-    assert groups["PROVIDER-AUTO"]["use"] == ["provider"]
-    assert groups["PROVIDER-AUTO"]["interval"] == 15
-    assert groups["PROVIDER-AUTO"]["timeout"] == 3000
-    assert groups["PROVIDER-AUTO"]["max-failed-times"] == 2
-    assert groups["PROVIDER-AUTO"]["tolerance"] == 50
-    assert groups["PROVIDER-AUTO"]["lazy"] is True
+    assert groups["PROVIDER-AUTO"]["type"] == "fallback"
+    assert groups["PROVIDER-AUTO"]["proxies"] == [
+        "AUTO-PROVIDER-LIVE",
+        "AUTO-PROVIDER-SEED",
+    ]
+    assert groups["AUTO-PROVIDER-LIVE"]["include-all-providers"] is True
+    assert groups["AUTO-PROVIDER-LIVE"]["filter"] == "^LIVE "
+    assert groups["AUTO-PROVIDER-LIVE"]["interval"] == 15
+    assert groups["AUTO-PROVIDER-LIVE"]["timeout"] == 3000
+    assert groups["AUTO-PROVIDER-LIVE"]["max-failed-times"] == 2
+    assert groups["AUTO-PROVIDER-LIVE"]["tolerance"] == 50
+    assert groups["AUTO-PROVIDER-LIVE"]["lazy"] is True
+    assert groups["AUTO-PROVIDER-SEED"]["include-all-providers"] is True
+    assert groups["AUTO-PROVIDER-SEED"]["filter"] == "^SEED "
+    assert groups["AUTO-PROVIDER-SEED"]["tolerance"] == 50
+    assert groups["AUTO-PROVIDER-SEED"]["hidden"] is True
+    assert groups["FETCH-PRIVATE"]["proxies"] == ["AUTO-PROVIDER-SEED", "DIRECT"]
+    assert groups["FETCH-AUTO-PROVIDER"]["proxies"] == [
+        "PRIVATE",
+        "AUTO-PROVIDER-SEED",
+        "DIRECT",
+    ]
+    assert groups["FETCH-PRIVATE"]["hidden"] is True
+    assert groups["FETCH-AUTO-PROVIDER"]["hidden"] is True
     assert groups["AUTO"]["type"] == "fallback"
     assert groups["AUTO"]["proxies"] == ["PRIVATE", "PROVIDER-AUTO"]
     assert groups["AUTO"]["timeout"] == 3000
@@ -84,7 +108,20 @@ def test_render_rules_and_fallback_order(config_path, users_path):
     assert parsed["proxy-providers"]["provider"]["exclude-filter"] == (
         "(?i)(?:Киев|Москва)"
     )
-    assert parsed["proxy-providers"]["provider"]["proxy"] == "DIRECT"
+    assert parsed["proxy-providers"]["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
+    assert parsed["proxy-providers"]["provider"]["override"]["additional-prefix"] == "LIVE | "
+    assert parsed["proxy-providers"]["private"]["proxy"] == "FETCH-PRIVATE"
+    assert parsed["proxy-providers"]["provider"]["header"]["User-Agent"] == [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+    ]
+    seed_node = parsed["proxy-providers"]["provider-seed"]["payload"][0]
+    assert seed_node["type"] == "vless"
+    assert seed_node["server"] == "seed.example.net"
+    assert seed_node["reality-opts"] == {
+        "public-key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "short-id": "0123456789abcdef",
+    }
 
     for provider in parsed["proxy-providers"].values():
         assert provider["health-check"]["timeout"] == 3000
@@ -96,34 +133,62 @@ def test_render_rules_and_fallback_order(config_path, users_path):
 
 
 def test_render_provider_download_proxy_is_configurable(
-    config_data, write_yaml, users_path
+    config_data, write_yaml, users_path, provider_state_dir
 ):
     config_data["render"]["provider_download_proxy"] = "PROXY"
     config_path = write_yaml("provider-proxy-config.yaml", config_data)
-    config = load_config(config_path)
+    config = load_config(config_path, state_dir=provider_state_dir)
     registry = load_users(users_path)
 
     parsed = yaml.safe_load(render_user_yaml(config, registry.users["alice"]))
 
-    assert parsed["proxy-providers"]["provider"]["proxy"] == "PROXY"
+    assert parsed["proxy-providers"]["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
 
 
 def test_render_provider_download_proxy_can_be_overridden_by_settings(
-    config_path, users_path
+    config_path, users_path, provider_state_dir
 ):
     config = load_config(
         config_path,
+        state_dir=provider_state_dir,
         settings_override={"render": {"provider_download_proxy": "PRIVATE"}},
     )
     registry = load_users(users_path)
 
     parsed = yaml.safe_load(render_user_yaml(config, registry.users["alice"]))
 
-    assert parsed["proxy-providers"]["provider"]["proxy"] == "PRIVATE"
+    assert parsed["proxy-providers"]["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
 
 
-def test_render_users_writes_to_user_token_filenames(config_path, users_path, tmp_path):
-    config = load_config(config_path, output_dir=tmp_path / "public")
+def test_seed_snapshot_updates_on_render_without_changing_live_provider_lifecycle(
+    profile_config, users_path
+):
+    user = load_users(users_path).users["alice"]
+    before = build_mihomo_profile(profile_config, user)
+    cache = profile_config.state_dir / "cache" / "provider.decoded"
+    cache.write_text(
+        SEED_URI.replace("seed.example.net", "seed-next.example.net").replace(
+            "fixture-seed", "fixture-next"
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    after = build_mihomo_profile(profile_config, user)
+
+    assert before["proxy-providers"]["provider-seed"]["payload"] != after[
+        "proxy-providers"
+    ]["provider-seed"]["payload"]
+    assert after["proxy-providers"]["provider"]["path"] == "./providers/provider.yaml"
+    assert after["proxy-providers"]["provider"]["interval"] == 900
+
+
+def test_render_users_writes_to_user_token_filenames(
+    config_path, users_path, tmp_path, provider_state_dir
+):
+    config = load_config(
+        config_path, state_dir=provider_state_dir, output_dir=tmp_path / "public"
+    )
     registry = load_users(users_path)
 
     rendered = render_users(config, registry)

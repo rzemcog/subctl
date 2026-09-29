@@ -43,7 +43,11 @@ gateway:
   dns_nameservers: ["1.1.1.1", "8.8.8.8"]
 ```
 
-The rendered Mihomo `proxy-providers.provider.proxy` controls how clients download the shared provider. `render.provider_download_proxy` defaults to `DIRECT`; if changed, the named outbound or group must exist in the generated profile and should not depend on the provider being downloaded.
+`render.provider_download_proxy` defaults to `DIRECT` and applies to the server-side gateway profile only. Public user profiles use the internal `FETCH-AUTO-PROVIDER` and `FETCH-PRIVATE` recovery groups; they do not use this setting.
+
+Public profiles include a SEED snapshot of the validated provider cache as an inline Mihomo provider. The LIVE HTTP provider keeps the existing `./providers/provider.yaml` cache path and update interval. The public `PROVIDER-AUTO` fallback prefers LIVE, then SEED. Mihomo's hidden latency groups use `include-all-providers` with `LIVE |` and `SEED |` name filters so their health checks include provider members; provider members added through `use` alone are not checked by a proxy group's `url` health check. Technical groups are hidden from the Mihomo group picker. Node names in these provider groups carry the corresponding prefix.
+
+The SEED converter currently accepts VLESS/TCP nodes using `none`, TLS, or Reality security, plus basic Trojan/TCP nodes with common SNI, ALPN, fingerprint, and `allowInsecure` fields. It fails the render without printing provider credentials if the cache contains a node format or parameter set it cannot faithfully represent. Add a converter and Mihomo validation before enabling other URI formats in the provider feed.
 
 `shared_token` and `controller_secret` must be generated per deployment. URL
 values may contain credentials and must be treated as secrets. The upstream

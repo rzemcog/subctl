@@ -45,9 +45,9 @@ def gateway_config_path(write_yaml, gateway_config_data):
 
 
 def test_gateway_profile_uses_direct_upstreams_and_shared_routing(
-    gateway_config_path, users_path
+    gateway_config_path, users_path, provider_state_dir
 ):
-    config = load_config(gateway_config_path)
+    config = load_config(gateway_config_path, state_dir=provider_state_dir)
     profile = build_gateway_profile(config)
     public_profile = yaml.safe_load(
         render_user_yaml(config, load_users(users_path).users["alice"])
@@ -58,12 +58,23 @@ def test_gateway_profile_uses_direct_upstreams_and_shared_routing(
     assert config.public.base_url not in yaml.safe_dump(profile)
     assert VALID_PROVIDER_TOKEN not in yaml.safe_dump(profile)
     assert VALID_ALICE_TOKEN not in yaml.safe_dump(profile)
-    assert profile["proxy-groups"] == [
-        {**group, "proxies": ["PROXY", "DIRECT"]}
-        if group["name"] == "BASE"
-        else group
-        for group in public_profile["proxy-groups"]
+    gateway_groups = {group["name"]: group for group in profile["proxy-groups"]}
+    public_groups = {group["name"]: group for group in public_profile["proxy-groups"]}
+    assert list(gateway_groups) == [
+        "PRIVATE",
+        "PROVIDER-AUTO",
+        "AUTO",
+        "PROXY",
+        "BASE",
     ]
+    assert gateway_groups["PROXY"] == public_groups["PROXY"]
+    assert gateway_groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
+    assert gateway_groups["AUTO"] == public_groups["AUTO"]
+    assert gateway_groups["PROVIDER-AUTO"]["type"] == "url-test"
+    assert "AUTO-PROVIDER-LIVE" not in gateway_groups
+    assert "FETCH-AUTO-PROVIDER" not in gateway_groups
+    assert profile["proxy-providers"]["provider"]["proxy"] == "DIRECT"
+    assert "header" not in profile["proxy-providers"]["provider"]
     assert profile["rules"][2:] == public_profile["rules"]
 
     providers = profile["proxy-providers"]
@@ -199,9 +210,9 @@ def test_gateway_external_ui_path_must_be_absolute(
 
 
 def test_gateway_profile_bootstraps_upstream_hosts_direct_only(
-    gateway_config_path, users_path
+    gateway_config_path, users_path, provider_state_dir
 ):
-    config = load_config(gateway_config_path)
+    config = load_config(gateway_config_path, state_dir=provider_state_dir)
     profile = build_gateway_profile(config)
 
     assert profile["rules"][:2] == [
@@ -318,9 +329,9 @@ def test_cli_render_gateway_redacts_secrets(gateway_config_path, tmp_path):
 
 
 def test_gateway_secrets_do_not_leak_into_public_profile(
-    gateway_config_path, users_path
+    gateway_config_path, users_path, provider_state_dir
 ):
-    config = load_config(gateway_config_path)
+    config = load_config(gateway_config_path, state_dir=provider_state_dir)
     output = render_user_yaml(config, load_users(users_path).users["alice"])
 
     assert PRIVATE_URL not in output

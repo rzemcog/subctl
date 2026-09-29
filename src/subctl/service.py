@@ -28,6 +28,7 @@ from .render import (
     _load_provider_lines,
     build_mihomo_profile,
     render_subscriptions,
+    render_user_yaml,
     yaml_output_path,
 )
 
@@ -312,8 +313,18 @@ class SubscriptionService:
         except ValidationError:
             raw["provider_nodes"] = None
         if selected_user is not None:
-            profile = _mask_preview(build_mihomo_profile(config, selected_user))
-            yaml_text = yaml.safe_dump(profile, sort_keys=False, allow_unicode=True)
+            yaml_text = render_user_yaml(config, selected_user)
+            profile = _mask_preview(yaml.safe_load(yaml_text))
+            comments = "\n".join(
+                line
+                for line in yaml_text.splitlines()
+                if line.startswith("# subctl-seed-")
+            )
+            if comments:
+                comments += "\n"
+            yaml_text = comments + yaml.safe_dump(
+                profile, sort_keys=False, allow_unicode=True
+            )
         return {
             "user": selected_user.name if selected_user else None,
             "settings": _settings_payload(config),
@@ -408,7 +419,19 @@ def _mask_preview(value: Any, *, key: str = "") -> Any:
         return {name: _mask_preview(item, key=name) for name, item in value.items()}
     if isinstance(value, list):
         return [_mask_preview(item, key=key) for item in value]
-    if isinstance(value, str) and (key in {"url", "private_url", "provider_url"} or "secret" in key or "token" in key):
+    sensitive_fields = {
+        "password",
+        "private-key",
+        "public-key",
+        "short-id",
+        "uuid",
+    }
+    if isinstance(value, str) and (
+        key in {"url", "private_url", "provider_url"}
+        or key.casefold() in sensitive_fields
+        or "secret" in key.casefold()
+        or "token" in key.casefold()
+    ):
         return mask_url(value) if key.endswith("url") or key == "url" else "***"
     return value
 
