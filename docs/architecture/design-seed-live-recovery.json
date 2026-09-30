@@ -6,15 +6,21 @@
   "modules": [
     {
       "name": "Recovery profile topology",
-      "responsibility": "Render public provider groups and ordered fallback paths, including empty-group behavior and a selected bootstrap proxy before HTTP providers initialize.",
-      "interface": "Produce a deterministic client profile that keeps an inline SEED provider for runtime selection, exposes bootstrap SEED nodes independently of HTTP provider load order, prefers healthy LIVE, and keeps PRIVATE to SEED to DIRECT fetch order after startup.",
-      "seam": "Parsed top-level bootstrap proxy references and actual Mihomo startup and group-selection behavior."
+      "responsibility": "Render public provider groups and ordered fallback paths, including empty-group behavior and provider-scoped SEED selection.",
+      "interface": "Produce a deterministic client profile that keeps one inline SEED provider for runtime and fetch selection, prefers healthy LIVE, and keeps PRIVATE to SEED to DIRECT fetch order without renaming source nodes.",
+      "seam": "Parsed group-scoped provider references, absence of duplicate top-level proxies, and actual Mihomo startup and group-selection behavior."
     },
     {
       "name": "Provider seed and cache lifecycle",
-      "responsibility": "Provide validated bootstrap nodes and retain the last usable LIVE cache when an update fails.",
+      "responsibility": "Provide validated inline SEED nodes and retain the last usable LIVE cache when an update fails.",
       "interface": "Supply the immutable SEED snapshot and apply successful LIVE updates while preserving existing data on failure.",
       "seam": "Seed snapshot construction and provider refresh error handling."
+    },
+    {
+      "name": "Protected Mihomo hosts mapping",
+      "responsibility": "Validate and render exact hostname-to-IP entries from protected runtime config.",
+      "interface": "Supply a normalized immutable map for public and gateway profiles while rejecting UI settings overrides.",
+      "seam": "Config loading, settings-overlay validation, and rendered profile hosts."
     }
   ],
   "interfaces": [
@@ -31,6 +37,13 @@
       "operations": ["load SEED snapshot", "refresh LIVE provider", "retain cached LIVE provider after failure"],
       "errors": ["invalid seed node", "upstream provider failure"],
       "idempotency": "A repeated failed refresh leaves the previously stored LIVE provider unchanged."
+    },
+    {
+      "name": "Protected Mihomo hosts mapping",
+      "owner": "Protected Mihomo hosts mapping",
+      "operations": ["validate exact hostname-to-IP entries", "render protected host overrides"],
+      "errors": ["invalid hostname", "invalid or scoped IP", "duplicate normalized hostname"],
+      "idempotency": "Equivalent hostname and IP spellings render one normalized exact entry."
     }
   ],
   "state_machines": [
@@ -92,7 +105,7 @@
   "failure_handling": [
     {
       "failure": "PRIVATE or LIVE has no nodes.",
-      "response": "Set its empty fallback to REJECT so the containing fallback can continue to the next declared group."
+      "response": "Set empty provider-backed policy groups to REJECT so the containing fallback can continue to the next declared group; GLOBAL lists policy groups only."
     },
     {
       "failure": "A LIVE provider refresh fails.",
@@ -127,6 +140,10 @@
     {
       "intent_ref": "I6",
       "design_refs": ["Recovery profile topology", "Public profile rendering"]
+    },
+    {
+      "intent_ref": "I7",
+      "design_refs": ["Protected Mihomo hosts mapping"]
     }
   ],
   "open_questions": []

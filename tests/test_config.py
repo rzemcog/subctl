@@ -1,6 +1,8 @@
 import pytest
 import yaml
 
+from subctl.config import load_config, validate_settings_overlay
+from subctl.errors import ValidationError
 from conftest import (
     VALID_ALICE_TOKEN,
     VALID_PROVIDER_TOKEN,
@@ -203,3 +205,66 @@ def test_examples_are_valid_yaml():
     for path in ("examples/config.yaml", "examples/users.yaml"):
         with open(path, encoding="utf-8") as handle:
             assert yaml.safe_load(handle)
+
+
+def test_mihomo_hosts_are_read_from_runtime_config_and_normalized(
+    write_yaml, config_data, provider_state_dir
+):
+    config_data["mihomo"] = {
+        "hosts": {
+            "Sub.Example.com.": "192.0.2.27",
+            "ipv6.example.test": "2001:0db8:0:0::1",
+        }
+    }
+    path = write_yaml("mihomo-hosts.yaml", config_data)
+
+    config = load_config(path, state_dir=provider_state_dir)
+
+    assert dict(config.mihomo.hosts) == {
+        "sub.example.com": "192.0.2.27",
+        "ipv6.example.test": "2001:db8::1",
+    }
+
+
+def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
+    write_yaml, config_data, provider_state_dir
+):
+    config_data.pop("mihomo")
+    path = write_yaml("legacy-config.yaml", config_data)
+
+    config = load_config(path, state_dir=provider_state_dir)
+
+    assert dict(config.mihomo.hosts) == {}
+
+
+@pytest.mark.parametrize(
+    "mihomo",
+    [
+        [],
+        {"hosts": []},
+        {"hosts": {"invalid host.example": "192.0.2.27"}},
+        {"hosts": {"192.0.2.27": "192.0.2.28"}},
+        {"hosts": {"sub.example.test": "not-an-ip"}},
+        {
+            "hosts": {
+                "Sub.Example.test.": "192.0.2.27",
+                "sub.example.test": "192.0.2.28",
+            }
+        },
+    ],
+)
+def test_invalid_mihomo_hosts_are_rejected(
+    write_yaml, config_data, provider_state_dir, mihomo
+):
+    config_data["mihomo"] = mihomo
+    path = write_yaml("invalid-mihomo-hosts.yaml", config_data)
+
+    with pytest.raises(ValidationError, match="mihomo"):
+        load_config(path, state_dir=provider_state_dir)
+
+
+def test_mihomo_hosts_are_not_mutable_through_ui_settings():
+    with pytest.raises(ValidationError, match="unsupported field"):
+        validate_settings_overlay(
+            {"mihomo": {"hosts": {"sub.example.test": "192.0.2.27"}}}
+        )

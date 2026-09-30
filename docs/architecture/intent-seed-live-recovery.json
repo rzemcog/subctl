@@ -4,7 +4,7 @@
   "id": "intent-seed-live-recovery",
   "title": "Reliable SEED and LIVE provider recovery",
   "problem": "When a provider has no usable nodes, Mihomo can treat its default COMPATIBLE fallback as direct and stop before the configured recovery route. Users then cannot reliably start from SEED or recover a missing LIVE provider.",
-  "outcome": "Generated profiles keep the existing PROVIDER-AUTO name, select healthy LIVE nodes when available, fall back to SEED when LIVE is empty or unavailable, and fetch LIVE in the order PRIVATE, SEED, then DIRECT while retaining a usable cached LIVE provider after failed updates.",
+  "outcome": "Generated profiles keep the public PROVIDER-AUTO name and source node names, select healthy LIVE nodes when available, fall back to SEED when LIVE is empty or unavailable, and fetch LIVE in the order PRIVATE, SEED, then DIRECT while retaining usable cached LIVE nodes after failed updates.",
   "actors": [
     {
       "name": "Profile user",
@@ -17,6 +17,9 @@
   ],
   "in_scope": [
     "Preserve the public PROVIDER-AUTO group name and healthy LIVE preference.",
+    "Keep source node names unchanged and exclude LIVE, SEED, and BOOTSTRAP prefixes.",
+    "Keep physical provider nodes out of the explicit GLOBAL policy group.",
+    "Render an optional validated mihomo.hosts map from protected runtime config only.",
     "Make empty PRIVATE and LIVE groups unavailable to fallback selection so the declared SEED recovery paths can run.",
     "Preserve the PRIVATE to SEED to DIRECT provider fetch order and the existing LIVE cache on failed updates.",
     "Correct the test-client dependency that causes the Starlette deprecation warning and verify the patch through tests, build, Mihomo, and deployment checks."
@@ -34,7 +37,7 @@
     {
       "id": "I2",
       "claim": "An empty PRIVATE selector or LIVE selector cannot become an implicit COMPATIBLE route that short-circuits recovery.",
-      "enforcement": "Generated resilient profiles set empty-fallback to REJECT on PRIVATE and AUTO-PROVIDER-LIVE; regression tests and real Mihomo probes verify that selection advances to SEED."
+      "enforcement": "Generated resilient profiles set empty-fallback to REJECT on PRIVATE and PROVIDER-AUTO-LIVE; regression tests and real Mihomo probes verify that selection advances to SEED."
     },
     {
       "id": "I3",
@@ -53,8 +56,13 @@
     },
     {
       "id": "I6",
-      "claim": "Bootstrap SEED nodes are available independently of HTTP provider initialization order, while the inline SEED provider remains the source for runtime selection.",
-      "enforcement": "Generated top-level bootstrap proxies, startup default selection, and fetch-route references are asserted, and an isolated Mihomo cold-start verifies the LIVE download route uses SEED."
+      "claim": "The group-scoped inline SEED provider is available to normal and fetch groups without a duplicate top-level proxy list.",
+      "enforcement": "Renderer assertions verify group-scoped provider references and no top-level proxies; an isolated Mihomo cold-start verifies the LIVE download route can use SEED."
+    },
+    {
+      "id": "I7",
+      "claim": "An optional exact hostname-to-IP map is read only from protected Mihomo runtime config and cannot be changed through UI settings.",
+      "enforcement": "Config tests validate exact hostnames and unscoped IP addresses, settings-overlay tests reject mihomo.hosts, and public/gateway profile tests verify rendering."
     }
   ],
   "failure_model": [
@@ -68,7 +76,7 @@
     },
     {
       "failure": "An HTTP provider starts before the inline SEED provider is initialized.",
-      "response": "Use generated top-level bootstrap copies as the fetch groups' default-selected and empty-fallback proxy while retaining the inline provider for normal runtime group selection."
+      "response": "Use the inline SEED provider through its hidden url-test group in the fetch route while retaining that same provider for normal runtime group selection."
     },
     {
       "failure": "A LIVE provider refresh fails after a valid cache exists.",

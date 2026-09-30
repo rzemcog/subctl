@@ -15,6 +15,9 @@ public:
   base_url: "https://sub.example.com"
   output_dir: "/var/lib/subctl/public"
 
+mihomo:
+  hosts: {}
+
 render:
   profile_update_interval_seconds: 3600
   provider_update_interval_seconds: 900
@@ -45,7 +48,11 @@ gateway:
 
 `render.provider_download_proxy` defaults to `DIRECT` and applies to the server-side gateway profile only. Public user profiles use the internal `FETCH-AUTO-PROVIDER` and `FETCH-PRIVATE` recovery groups; they do not use this setting.
 
-Public profiles include a SEED snapshot of the validated provider cache as an inline Mihomo provider. The LIVE HTTP provider keeps the existing `./providers/provider.yaml` cache path and update interval. The public `PROVIDER-AUTO` fallback prefers LIVE, then SEED. Mihomo's hidden latency groups use `include-all-providers` with `LIVE |` and `SEED |` name filters so their health checks include provider members; provider members added through `use` alone are not checked by a proxy group's `url` health check. Technical groups are hidden from the Mihomo group picker. Node names in these provider groups carry the corresponding prefix.
+`mihomo.hosts` is an optional protected mapping from exact DNS hostnames to unscoped IP addresses. The renderer copies validated entries into generated Mihomo profiles without replacing the URL hostname, HTTP Host, or TLS SNI. UI settings cannot change this map.
+
+Public profiles include a SEED snapshot of the validated provider cache as an inline Mihomo provider. The LIVE HTTP provider keeps the existing `./providers/provider.yaml` cache path and update interval and sends a browser-like `User-Agent` header. The public `PROVIDER-AUTO` fallback prefers `PROVIDER-AUTO-LIVE`, then `PROVIDER-AUTO-SEED`. Both child groups use their respective providers directly, and the original node names remain visible without LIVE, SEED, or BOOTSTRAP prefixes. `FETCH-PRIVATE` tries SEED then DIRECT; `FETCH-AUTO-PROVIDER` tries PRIVATE, SEED, then DIRECT. Fetch recovery refers to the SEED group; it does not add duplicate seed proxies to the top-level `proxies` list.
+
+The explicit `GLOBAL` group contains policy-group names only. It does not list physical provider nodes. Recovery groups are hidden from the Mihomo group picker.
 
 The SEED converter currently accepts VLESS/TCP nodes using `none`, TLS, or Reality security, plus basic Trojan/TCP nodes with common SNI, ALPN, fingerprint, and `allowInsecure` fields. It fails the render without printing provider credentials if the cache contains a node format or parameter set it cannot faithfully represent. Add a converter and Mihomo validation before enabling other URI formats in the provider feed.
 
@@ -88,4 +95,4 @@ Published safe UI settings are stored in
 health-check parameters, provider exclusions, composition order and prefixes.
 They cannot replace secrets, gateway routing rules or the protected registry.
 
-The Web UI and systemd refresh timer apply the same effective configuration.
+The Web UI and systemd refresh timer apply the same effective configuration. UI settings cannot change `mihomo.hosts`, gateway routing, or credentials.

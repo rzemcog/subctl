@@ -24,8 +24,6 @@ proxy-providers:
       interval: 15
       timeout: 3000
       lazy: true
-    override:
-      additional-prefix: 'LIVE | '
     header:
       User-Agent:
       - Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
@@ -33,7 +31,7 @@ proxy-providers:
   provider-seed:
     type: inline
     payload:
-    - name: SEED | fixture-seed
+    - name: fixture-seed
       type: vless
       server: seed.example.net
       port: 443
@@ -53,21 +51,6 @@ proxy-providers:
       interval: 15
       timeout: 3000
       lazy: true
-proxies:
-- name: BOOTSTRAP-SEED | fixture-seed
-  type: vless
-  server: seed.example.net
-  port: 443
-  uuid: 123e4567-e89b-12d3-a456-426614174000
-  network: tcp
-  encryption: ''
-  flow: xtls-rprx-vision
-  tls: true
-  servername: seed.example.net
-  client-fingerprint: chrome
-  reality-opts:
-    public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-    short-id: 0123456789abcdef
 proxy-groups:
 - name: PRIVATE
   type: select
@@ -77,8 +60,9 @@ proxy-groups:
 - name: PROVIDER-AUTO
   type: fallback
   proxies:
-  - AUTO-PROVIDER-LIVE
-  - AUTO-PROVIDER-SEED
+  - PROVIDER-AUTO-LIVE
+  - PROVIDER-AUTO-SEED
+  empty-fallback: REJECT
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000
@@ -89,6 +73,7 @@ proxy-groups:
   proxies:
   - PRIVATE
   - PROVIDER-AUTO
+  empty-fallback: REJECT
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000
@@ -106,10 +91,10 @@ proxy-groups:
   proxies:
   - DIRECT
   - PROXY
-- name: AUTO-PROVIDER-LIVE
+- name: PROVIDER-AUTO-LIVE
   type: url-test
-  include-all-providers: true
-  filter: '^LIVE '
+  use:
+  - provider
   empty-fallback: REJECT
   url: https://www.gstatic.com/generate_204
   interval: 15
@@ -118,10 +103,11 @@ proxy-groups:
   tolerance: 50
   lazy: true
   hidden: true
-- name: AUTO-PROVIDER-SEED
+- name: PROVIDER-AUTO-SEED
   type: url-test
-  include-all-providers: true
-  filter: '^SEED '
+  use:
+  - provider-seed
+  empty-fallback: REJECT
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000
@@ -132,10 +118,8 @@ proxy-groups:
 - name: FETCH-PRIVATE
   type: fallback
   proxies:
-  - BOOTSTRAP-SEED | fixture-seed
+  - PROVIDER-AUTO-SEED
   - DIRECT
-  default-selected: BOOTSTRAP-SEED | fixture-seed
-  empty-fallback: BOOTSTRAP-SEED | fixture-seed
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000
@@ -146,16 +130,26 @@ proxy-groups:
   type: fallback
   proxies:
   - PRIVATE
-  - BOOTSTRAP-SEED | fixture-seed
+  - PROVIDER-AUTO-SEED
   - DIRECT
-  default-selected: BOOTSTRAP-SEED | fixture-seed
-  empty-fallback: BOOTSTRAP-SEED | fixture-seed
   url: https://www.gstatic.com/generate_204
   interval: 15
   timeout: 3000
   max-failed-times: 2
   lazy: true
   hidden: true
+- name: GLOBAL
+  type: select
+  proxies:
+  - PRIVATE
+  - PROVIDER-AUTO
+  - AUTO
+  - PROXY
+  - BASE
+  - PROVIDER-AUTO-LIVE
+  - PROVIDER-AUTO-SEED
+  - FETCH-PRIVATE
+  - FETCH-AUTO-PROVIDER
 rules:
 - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
 - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve

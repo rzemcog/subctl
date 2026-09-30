@@ -66,15 +66,19 @@ def test_gateway_profile_uses_direct_upstreams_and_shared_routing(
         "AUTO",
         "PROXY",
         "BASE",
+        "GLOBAL",
     ]
     assert gateway_groups["PROXY"] == public_groups["PROXY"]
     assert gateway_groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
     assert gateway_groups["AUTO"] == public_groups["AUTO"]
     assert gateway_groups["PROVIDER-AUTO"]["type"] == "url-test"
-    assert "AUTO-PROVIDER-LIVE" not in gateway_groups
+    assert "PROVIDER-AUTO-LIVE" not in gateway_groups
     assert "FETCH-AUTO-PROVIDER" not in gateway_groups
     assert profile["proxy-providers"]["provider"]["proxy"] == "DIRECT"
     assert "header" not in profile["proxy-providers"]["provider"]
+    assert gateway_groups["GLOBAL"]["proxies"] == [
+        name for name in gateway_groups if name != "GLOBAL"
+    ]
     assert profile["rules"][2:] == public_profile["rules"]
 
     providers = profile["proxy-providers"]
@@ -90,11 +94,31 @@ def test_gateway_profile_uses_direct_upstreams_and_shared_routing(
         }
 
     groups = {group["name"]: group for group in profile["proxy-groups"]}
-    assert list(groups) == ["PRIVATE", "PROVIDER-AUTO", "AUTO", "PROXY", "BASE"]
+    assert list(groups) == [
+        "PRIVATE",
+        "PROVIDER-AUTO",
+        "AUTO",
+        "PROXY",
+        "BASE",
+        "GLOBAL",
+    ]
     assert groups["PROVIDER-AUTO"]["max-failed-times"] == 2
     assert groups["PROVIDER-AUTO"]["tolerance"] == 50
     assert groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
     assert profile["rules"][-1] == "MATCH,BASE"
+
+
+def test_gateway_profile_includes_protected_runtime_hosts_mapping(
+    gateway_config_data, write_yaml, provider_state_dir
+):
+    mapping = {"gateway.fixture.test": "192.0.2.71"}
+    gateway_config_data["mihomo"] = {"hosts": mapping}
+    config = load_config(
+        write_yaml("gateway-host-map.yaml", gateway_config_data),
+        state_dir=provider_state_dir,
+    )
+
+    assert build_gateway_profile(config)["hosts"] == mapping
 
 
 def test_gateway_profile_has_loopback_listeners_secret_and_disabled_tun(

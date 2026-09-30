@@ -15,7 +15,7 @@ def test_load_provider_seed_converts_reality_vless_and_tracks_snapshot(tmp_path)
 
     assert len(seed.proxies) == 1
     assert seed.proxies[0] == {
-        "name": "SEED | fixture-seed",
+        "name": "fixture-seed",
         "type": "vless",
         "server": "seed.example.net",
         "port": 443,
@@ -43,8 +43,8 @@ def test_load_provider_seed_applies_name_exclusions_and_unique_names(tmp_path):
     seed = load_provider_seed(cache, ("skip-this",))
     assert len(seed.proxies) == 2
     assert [proxy["name"] for proxy in seed.proxies] == [
-        "SEED | fixture-seed",
-        "SEED | fixture-seed (2)",
+        "fixture-seed",
+        "fixture-seed (2)",
     ]
 
     with pytest.raises(ValidationError, match="no nodes after applying provider exclusions"):
@@ -71,7 +71,7 @@ def test_load_provider_seed_converts_basic_trojan_nodes(tmp_path):
 
     assert seed.proxies == (
         {
-            "name": "SEED | provider",
+            "name": "provider",
             "type": "trojan",
             "server": "provider.example",
             "port": 443,

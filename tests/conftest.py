@@ -52,6 +52,7 @@ def config_data(tmp_path):
             "base_url": "https://sub.example.com",
             "output_dir": str(tmp_path / "public"),
         },
+        "mihomo": {"hosts": {}},
         "render": {
             "profile_update_interval_seconds": 3600,
             "provider_update_interval_seconds": 900,
