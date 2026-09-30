@@ -64,16 +64,10 @@ Provider refresh is transactional. If upstream fetch, validation or publication
 fails, the previous valid cache and public feed remain in place. If a render
 fails for one user, that user's last valid artifact remains available.
 
-For a bad application release, stop the timer, install the previous package
-version, restart the Web UI and run a full render:
-
-```bash
-sudo systemctl disable --now subctl-refresh.timer
-/opt/subctl/venv/bin/pip install /path/to/previous/subctl
-sudo systemctl restart subctl-web.service
-sudo systemctl start subctl-refresh.service
-sudo systemctl enable --now subctl-refresh.timer
-```
+For an application release rollback, use the verified immutable bundle and its
+matching systemd/Caddy snapshots. Follow the exact procedure in
+[deployment.md](deployment.md); do not install a guessed package path or use a
+working tree as a rollback source.
 
 Do not restore secrets from Git. Restore protected configuration and registry
 files from an external secret-managed backup only.

@@ -20,6 +20,78 @@ VENV_DIR="${SUBCTL_VENV_DIR:-/opt/subctl/venv}"
 CONFIG_DIR="${SUBCTL_CONFIG_DIR:-/etc/subctl}"
 STATE_DIR="${SUBCTL_STATE_DIR:-/var/lib/subctl}"
 
+if [[ "${1:-}" == "--release-dir" ]]; then
+  if [[ $# -ne 2 ]]; then
+    echo "usage: $0 --release-dir /var/lib/subctl/releases/<release-id>" >&2
+    exit 2
+  fi
+  RELEASE_DIR="$(realpath -e -- "$2")"
+  RELEASE_ROOT="$(realpath -e -- "$STATE_DIR/releases")"
+  if [[ "$(dirname "$RELEASE_DIR")" != "$RELEASE_ROOT" ]]; then
+    echo "release directory must be a direct child of $RELEASE_ROOT" >&2
+    exit 1
+  fi
+  command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
+  command -v caddy >/dev/null 2>&1 || { echo "caddy is required" >&2; exit 1; }
+  command -v systemd-analyze >/dev/null 2>&1 || { echo "systemd-analyze is required" >&2; exit 1; }
+  [[ -f "$CONFIG_DIR/config.yaml" ]] || { echo "missing $CONFIG_DIR/config.yaml" >&2; exit 1; }
+  [[ -x "$VENV_DIR/bin/python" ]] || { echo "missing runtime Python at $VENV_DIR/bin/python" >&2; exit 1; }
+
+  python3 "$ROOT_DIR/deploy/release.py" verify --path "$RELEASE_DIR" >/dev/null
+  for unit in subctl-web.service subctl-refresh.service subctl-refresh.timer; do
+    [[ -f "$RELEASE_DIR/systemd/$unit" ]] || { echo "release is missing $unit" >&2; exit 1; }
+  done
+  [[ -f "$RELEASE_DIR/Caddyfile" ]] || { echo "release is missing Caddyfile" >&2; exit 1; }
+  mapfile -t APP_WHEELS < <(find "$RELEASE_DIR/package" -maxdepth 1 -type f -name '*.whl' -print)
+  mapfile -t DEPENDENCY_WHEELS < <(find "$RELEASE_DIR/wheelhouse" -maxdepth 1 -type f -name '*.whl' -print | sort)
+  [[ ${#APP_WHEELS[@]} -eq 1 && ${#DEPENDENCY_WHEELS[@]} -gt 0 ]] || {
+    echo "release must contain one application wheel and dependency wheels" >&2
+    exit 1
+  }
+
+  systemd-analyze verify \
+    "$RELEASE_DIR/systemd/subctl-web.service" \
+    "$RELEASE_DIR/systemd/subctl-refresh.service" \
+    "$RELEASE_DIR/systemd/subctl-refresh.timer"
+  caddy validate --config "$RELEASE_DIR/Caddyfile"
+  "$VENV_DIR/bin/python" -m pip install --no-index --no-deps --force-reinstall \
+    "${APP_WHEELS[0]}" "${DEPENDENCY_WHEELS[@]}"
+  "$VENV_DIR/bin/python" -m pip check
+
+  staged_files=()
+  cleanup_release_staging() {
+    for staged_file in "${staged_files[@]}"; do
+      rm -f -- "$staged_file"
+    done
+  }
+  trap cleanup_release_staging EXIT
+
+  install -d -o root -g root -m 0755 /etc/systemd/system /etc/caddy
+  for unit in subctl-web.service subctl-refresh.service subctl-refresh.timer; do
+    staged="/etc/systemd/system/.${unit}.subctl.$$"
+    install -o root -g root -m 0644 "$RELEASE_DIR/systemd/$unit" "$staged"
+    staged_files+=("$staged")
+  done
+  staged_caddy="/etc/caddy/.Caddyfile.subctl.$$"
+  install -o root -g root -m 0644 "$RELEASE_DIR/Caddyfile" "$staged_caddy"
+  staged_files+=("$staged_caddy")
+  caddy validate --config "$staged_caddy"
+
+  for unit in subctl-web.service subctl-refresh.service subctl-refresh.timer; do
+    mv -f -- "/etc/systemd/system/.${unit}.subctl.$$" "/etc/systemd/system/$unit"
+  done
+  mv -f -- "$staged_caddy" /etc/caddy/Caddyfile
+  systemctl daemon-reload
+  caddy validate --config /etc/caddy/Caddyfile
+  if systemctl is-active --quiet caddy.service; then
+    systemctl reload caddy.service
+  else
+    systemctl enable --now caddy.service
+  fi
+  echo "subctl immutable release assets installed; restart and verification are managed by release.py"
+  exit 0
+fi
+
 if [[ "$ROOT_DIR" != "$APP_DIR" ]]; then
   echo "run the installer from $APP_DIR or set SUBCTL_APP_DIR=$ROOT_DIR" >&2
   exit 1

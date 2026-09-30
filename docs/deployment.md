@@ -1,109 +1,150 @@
-# Deployment on Ubuntu 24.04 or Debian 12
+# Production deployment and rollback
 
-This guide deploys the CLI, Web UI, Caddy publisher and optional Mihomo
-gateway. Keep credentials out of the repository and shell history where
-possible.
+Production releases use one commit-bound release bundle. A release is the pair
+of a full Git commit SHA and an immutable application wheel with its SHA256;
+the bundle also retains the dependency wheels and matching systemd/Caddy files.
+The package is built from a clean, already-pushed commit using `git archive`.
+Rollback installs the saved bundle and never rebuilds an old commit.
 
-## 1. Install prerequisites
+## Confirmed production topology
 
-```bash
-sudo apt update
-sudo apt install -y \
-  ca-certificates curl git python3 python3-venv python3-pip \
-  caddy tar coreutils gettext-base
+On `ru-vps`:
+
+```text
+/root/subctl                 Git source/control checkout
+/opt/subctl                  runtime parent; not a Git checkout
+/opt/subctl/venv             installed Python runtime
+/etc/subctl/config.yaml      protected production configuration
+/var/lib/subctl/registry/    protected user registry
+/var/lib/subctl/{cache,public,ui}/ generated runtime state
+/etc/systemd/system/         active subctl service and timer files
+/etc/caddy/Caddyfile         active rendered Caddy configuration
+/var/lib/subctl/releases/    immutable release bundles and release records
 ```
 
-Install Node.js 20.19+ (or 22.12+) with npm using a trusted version manager
-or distribution repository. Ubuntu 24.04's default Node.js package may be too
-old for the current Vite toolchain. Verify the selected runtime before build:
+`/var/lib/subctl/releases/<release-id>/` contains `manifest.json`, the
+application wheel, a runtime dependency wheelhouse, three systemd snapshots,
+and the rendered Caddyfile. The manifest records the full commit, package
+filename and SHA256, all bundle file hashes, build time, and build environment.
+The full commit and bundle SHA256 form the release ID. A deployment event and
+`current.json` record the successful deployment or rollback time. `anchor.json`
+identifies the initial fallback. These records and bundles are root-owned; the
+bundle files are read-only and existing release IDs are never overwritten.
+
+Configuration, user registry, cache, generated subscription files, UI state,
+Mihomo data, secrets, TLS material, and other protected state are outside the
+release bundle. The release installer does not copy or replace them.
+
+## First rollback anchor
+
+The first Release N anchor is based on commit
+`780fe63d697230f728ec8f3c7584d65b360730f1`. This is the nearest reproducible
+Git baseline to the production process that was running. It is **not proven to
+be the exact revision loaded in that process**; the historical relationship is
+recorded as `inferred` in the manifest and `anchor.json`.
+
+Bootstrap stores the package built from that commit and captures the currently
+active systemd/Caddy files after verifying that they match the selected
+baseline. It does not install the anchor or restart a service. Run this once on
+the confirmed host before the first new deployment:
 
 ```bash
-node --version
-npm --version
+ssh ru-vps
+cd /root/subctl
+SUBCTL_DOMAIN="$(/opt/subctl/venv/bin/python -c 'import yaml; from urllib.parse import urlsplit; print(urlsplit(yaml.safe_load(open("/etc/subctl/config.yaml"))["public"]["base_url"]).hostname)')"
+sudo python3 deploy/release.py bootstrap \
+  --commit 780fe63d697230f728ec8f3c7584d65b360730f1 \
+  --domain "$SUBCTL_DOMAIN"
+sudo python3 deploy/release.py status
 ```
 
-Install Mihomo separately when the gateway is required. Verify that the binary
-is available as `/usr/local/bin/mihomo` and create its service account:
+If the active infrastructure files no longer match the baseline, bootstrap
+stops before writing the anchor so the discrepancy can be reviewed.
+
+## Official deploy workflow
+
+Commit and push source changes before building a package. On the production
+checkout, fetch the pushed main branch and inspect its state:
 
 ```bash
-sudo useradd --system --home-dir /var/lib/mihomo --shell /usr/sbin/nologin mihomo || true
+cd /root/subctl
+SUBCTL_DOMAIN="$(/opt/subctl/venv/bin/python -c 'import yaml; from urllib.parse import urlsplit; print(urlsplit(yaml.safe_load(open("/etc/subctl/config.yaml"))["public"]["base_url"]).hostname)')"
+git fetch origin main
+git status --short --branch
+git merge --ff-only origin/main
+git status --porcelain --untracked-files=all
+git rev-parse HEAD
 ```
 
-Install MetaCubeXD only when the local Mihomo panel is needed:
+The final `git status` must be empty. `build` also rejects a dirty checkout, a
+commit that is not `HEAD`, or a commit not reachable from `origin/main`.
+
+Build from that exact pushed commit and deploy the release ID printed by the
+builder:
 
 ```bash
-sudo ./deploy/install-metacubexd.sh install
+sudo python3 deploy/release.py build \
+  --commit "$(git rev-parse HEAD)" \
+  --domain "$SUBCTL_DOMAIN"
+sudo python3 deploy/release.py status
+sudo python3 deploy/release.py deploy --release-id <release-id>
+sudo python3 deploy/release.py status
 ```
 
-## 2. Prepare the checkout
+The helper serializes release operations, validates the target and current
+fallback hashes, pauses the refresh timer and web service, then calls the
+release mode of `deploy/install.sh`. That mode installs the saved wheels with
+`pip --no-index`, validates and applies the matching systemd/Caddy snapshots,
+reloads systemd and Caddy, and checks `pip check`. The helper explicitly
+restarts `subctl-web.service`, checks `/`, `/health`, and `/healthz`, runs
+`subctl-refresh.service` once, runs the public subscription smoke check, resumes
+`subctl-refresh.timer`, and only then writes `current.json` and the success
+event. The refresh unit's successful completion confirms both provider refresh
+and rendering succeeded.
+
+`systemctl enable --now subctl-web.service` does **not** restart an already
+running web process. Production releases always issue an explicit restart.
+
+If installation or verification fails, the helper applies the retained
+fallback package, dependencies, units, and Caddy snapshot and verifies that
+release. It records the fallback as active only after recovery checks pass. If
+fallback recovery also fails, it leaves the web service stopped and preserves
+the last verified active record for operator recovery.
+
+## Status and rollback
+
+Status keeps two revisions distinct: `/root/subctl` source checkout `HEAD` and
+the release recorded in `/var/lib/subctl/releases/current.json`. Rollback
+intentionally leaves the source checkout on the current release-control
+branch; the old release's commit remains the provenance/audit anchor while the
+saved package is installed.
 
 ```bash
-sudo git clone https://github.com/<owner>/<repo>.git /opt/subctl
-cd /opt/subctl
+sudo python3 deploy/release.py status
+sudo python3 deploy/release.py rollback --release-id <saved-release-id>
+sudo python3 deploy/release.py status
 ```
 
-## 3. Create protected configuration
+Rollback verifies the release manifest, all bundle hashes, and that the full
+commit exists in the local Git object database. It installs the stored package
+and dependency wheels without rebuilding source, restores that bundle's
+systemd/Caddy files, explicitly restarts the web service, and runs health and
+public smoke checks. A failed rollback automatically restores the previously
+active release. Never run `pip install` from a guessed path or restore
+application code from a working tree as a production rollback.
 
-```bash
-sudo install -d -o root -g subctl -m 0750 /etc/subctl
-sudo install -d -o subctl -g subctl -m 0750 \
-  /var/lib/subctl/registry /var/lib/subctl/ui /var/lib/subctl/public
-sudo install -o root -g subctl -m 0640 /path/to/config.yaml /etc/subctl/config.yaml
-sudo install -o subctl -g subctl -m 0600 /path/to/users.yaml \
-  /var/lib/subctl/registry/users.yaml
-```
+## Fresh installation
 
-Create the files from [configuration.md](configuration.md). Never copy real
-production values into `examples/` or commit them.
-
-## 4. Install services and Caddy
-
-Set the public hostname and run the idempotent installer:
+The ordinary installer remains for a new host after protected configuration
+has been prepared. It builds from the checked-out source and installs the
+initial services:
 
 ```bash
 export SUBCTL_DOMAIN=sub.example.com
 sudo -E ./deploy/install.sh
 ```
 
-The installer validates the hostname, installs the Web UI and refresh units,
-renders the Caddy template with the supplied domain, validates Caddy and
-reloads services. It does not create or rotate secrets.
-
-The Web UI listens on `127.0.0.1:12790`. Caddy serves subscription endpoints
-and proxies tokenized paths to FastAPI so download telemetry can be recorded
-without logging token URLs.
-
-## 5. Enable the refresh timer
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now subctl-refresh.timer
-systemctl list-timers subctl-refresh.timer
-sudo journalctl -u subctl-refresh.service -n 50 --no-pager
-```
-
-The timer refreshes the provider and renders users under a shared lock. A
-provider failure keeps the last valid cache and public feed.
-
-## 6. Access the UI and Mihomo panel
-
-```bash
-ssh -N \
-  -L 12790:127.0.0.1:12790 \
-  -L 19090:127.0.0.1:19090 \
-  admin@vps.example.com
-```
-
-Open `http://127.0.0.1:12790/` and, when Mihomo is enabled,
-`http://127.0.0.1:19090/ui/`.
-
-## Upgrade
-
-```bash
-cd /opt/subctl
-git pull --ff-only
-sudo -E SUBCTL_DOMAIN=sub.example.com ./deploy/install.sh
-```
-
-The installer preserves `/etc/subctl` and `/var/lib/subctl`. Check service
-status and run the smoke checks after upgrading.
+This is a bootstrap/fresh-install path, not the production upgrade or rollback
+workflow for `ru-vps`. Production upgrades and rollbacks must use
+`deploy/release.py` so the application package and infrastructure files come
+from one verified immutable bundle.

@@ -96,8 +96,7 @@ See [configuration](docs/configuration.md) for the protected config format.
 
 ## Deployment
 
-The recommended workflow is manual configuration followed by the idempotent
-installer/checker:
+For a fresh host, prepare the protected configuration and run the installer:
 
 ```bash
 export SUBCTL_DOMAIN=sub.example.com
@@ -107,6 +106,15 @@ sudo ./deploy/install.sh
 The installer does not create secrets and does not read credentials from Git.
 Create `/etc/subctl/config.yaml` and the protected users registry first, or
 follow the complete guide in [docs/deployment.md](docs/deployment.md).
+
+Production releases use a different, single official workflow:
+`deploy/release.py` builds an immutable wheel bundle from a clean pushed Git
+commit, then deploys or rolls back that bundle with matching dependencies,
+systemd files, and Caddy configuration. A release is identified by its full
+Git commit and bundle SHA256. See [Production deployment and rollback](docs/deployment.md)
+for the confirmed `ru-vps` topology, initial inferred rollback anchor, exact
+commands, verification, and recovery procedure. Do not use `git pull` plus the
+fresh-install path to upgrade that production host.
 
 The deployment templates use these public paths:
 
@@ -150,7 +158,8 @@ version history and rollback.
 ## Operations
 
 Use [docs/operations.md](docs/operations.md) for refresh/render commands,
-systemd logs, smoke checks, upgrades and rollback. For contribution rules see
+systemd logs, and smoke checks; use [docs/deployment.md](docs/deployment.md)
+for production upgrades and rollback. For contribution rules see
 [CONTRIBUTING.md](CONTRIBUTING.md); for vulnerability reports see
 [SECURITY.md](SECURITY.md).
 

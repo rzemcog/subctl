@@ -1,0 +1,452 @@
+{
+  "kind": "design",
+  "schema_version": "0.1",
+  "id": "design-production-release-rollback",
+  "derived_from": "intent-production-release-rollback",
+  "requirements_ledger": {
+    "fixed": [
+      "Production source checkout is /root/subctl and the installed runtime is /opt/subctl/venv; /opt/subctl is not a Git checkout.",
+      "Each release binds a Git commit to an immutable installable package and SHA256.",
+      "The first rollback anchor is built from 780fe63 as the nearest reproducible baseline; its historical relation to the live process is inferred, not proven.",
+      "Rollback restores the application package, all three subctl systemd unit files, and the matching Caddy configuration.",
+      "Deployment explicitly restarts subctl-web.service and verifies production health, refresh/render, publication paths, and provenance.",
+      "Protected config, user registry, and generated state remain outside package installation and release rollback.",
+      "Subctl project changes are committed and pushed; agent-context changes are committed separately after production verification."
+    ],
+    "preferences": [
+      "Prefer a wheel as the application artifact.",
+      "Use a repository-level helper that orchestrates the existing installer rather than duplicating its installation logic.",
+      "Prefer the production source checkout to match the active release when that does not undermine safe future operations."
+    ],
+    "assumptions": [
+      "Production deployment runs as root through the documented ssh ru-vps alias.",
+      "The production domain is read from protected config.yaml at deployment time and must match the active Caddyfile.",
+      "The source commit has been pushed to origin/main before deployment; the remote checkout fetches main before the release helper verifies reachability.",
+      "The app wheel and its resolved runtime dependency wheels can be built on the production host using its supported Python 3.12 and Node/npm toolchain.",
+      "The active systemd and Caddy snapshots are safe release assets; no protected config or generated feed content is stored in a release."
+    ],
+    "out_of_scope": [
+      "Changing /etc/subctl/config.yaml, /var/lib/subctl/registry/users.yaml, generated subscription contents, Mihomo configuration, routes, firewall, TLS, or external DNS.",
+      "Automatically pruning old releases; retain artifacts by default until a separately designed safe retention policy exists."
+    ]
+  },
+  "solution_classes": [
+    {
+      "name": "Git checkout deployment",
+      "tradeoff": "Simple but mutable; the checkout can be dirty or move independently from the installed package, and rollback must rebuild source."
+    },
+    {
+      "name": "Package-only deployment",
+      "tradeoff": "Pins the Python package but cannot restore systemd/Caddy assets as one release or keep the runtime dependency set available for rollback."
+    },
+    {
+      "name": "Commit-bound release bundle",
+      "tradeoff": "Builds an app wheel and dependency wheelhouse from one exact commit, stores matching infrastructure snapshots and hashes, and costs more disk space and orchestration code."
+    }
+  ],
+  "selected_architecture": {
+    "name": "Commit-bound immutable release bundle",
+    "reason": "It provides one verifiable rollback unit for the application, its Python dependency wheels, systemd files, and rendered Caddyfile while retaining the commit as source/audit provenance.",
+    "release_root": "/var/lib/subctl/releases",
+    "release_layout": [
+      "<release-id>/manifest.json",
+      "<release-id>/package/<subctl-wheel>.whl",
+      "<release-id>/wheelhouse/<runtime-dependency-wheels>",
+      "<release-id>/systemd/subctl-web.service",
+      "<release-id>/systemd/subctl-refresh.service",
+      "<release-id>/systemd/subctl-refresh.timer",
+      "<release-id>/Caddyfile",
+      "current.json",
+      "events/<operation-id>.json"
+    ],
+    "release_id": "A stable identifier derived from the full source commit SHA and release-bundle content hash; a repeated build never overwrites an existing release.",
+    "manifest": "An immutable JSON sidecar records release ID, full Git commit SHA, application wheel filename and SHA256, wheelhouse file hashes, systemd/Caddy hashes, build UTC timestamp, build runtime versions, and source provenance. Bootstrap metadata sets historical_runtime_relation=inferred and states that the actual in-memory process revision was not proven. Successful deploy/rollback timestamps are immutable event records outside the release bundle.",
+    "artifact_mutability": "The builder creates a private staging directory, verifies all hashes, applies root ownership and read-only modes, then atomically renames it into the release store. Existing release IDs are never replaced.",
+    "build_source": "The helper requires a clean Git checkout and a commit reachable from origin/main, exports only tracked files from that exact commit to temporary staging, runs npm ci and npm run build there, then builds the subctl wheel plus its resolved runtime dependency wheelhouse. It does not build from or modify the mutable source working tree.",
+    "initial_anchor": "Bootstrap commit 780fe63 into the release store without installing it. Capture the currently active systemd unit files and rendered Caddyfile, verify them against that commit's tracked assets, and record source provenance as inferred. Preserve the original service process until the target deployment begins.",
+    "active_record": "Write current.json atomically only after all target verification succeeds. It names the release ID, commit, package filename/hash, and actual successful deployment time. Before the first successful deployment there is no current.json; the explicitly supplied bootstrap release is the fallback.",
+    "source_checkout_policy": "Keep /root/subctl on the current control-plane/main commit when rolling back, because the accepted 780fe63 baseline predates the release helper. release status reports source checkout HEAD separately from current.json so Git HEAD is never mistaken for the deployed revision.",
+    "serialization": "Use one root-owned deployment lock. Abort before service changes if another refresh is active, a release is invalid, the source tree is dirty, or required production files are missing.",
+    "installation": "The release helper invokes deploy/install.sh in an explicit release-dir mode. That mode verifies the bundle, installs the exact app wheel and dependency wheelhouse with pip --no-index, installs the bundle's systemd snapshots, validates a staged Caddyfile before atomic replacement, runs systemd daemon-reload, and does not run npm, upgrade pip, create/replace protected state, or rely on enable --now to restart the web service.",
+    "deployment_sequence": [
+      "Verify the fallback release, source cleanliness, pushed commit ancestry, hashes, Caddy candidate, and systemd unit syntax before stopping services.",
+      "Stop subctl-refresh.timer and subctl-web.service so no refresh or application process uses a mixed filesystem release during installation.",
+      "Invoke the shared installer in release mode, apply matching systemd/Caddy files, reload systemd, validate/reload Caddy, and explicitly restart subctl-web.service.",
+      "Check systemd service state and loopback /, /health, and /healthz responses.",
+      "Start subctl-refresh.service once after confirming it is not active; verify successful provider refresh and render completion without exposing URLs or user data.",
+      "Run the repository public subscription smoke check, which reads the protected config/registry only to construct requests and reports counts/status without printing tokens or response bodies.",
+      "Re-enable/start subctl-refresh.timer, verify the oneshot result and Caddy configuration, then atomically write current.json and a deployment event.",
+      "On any post-install failure, keep the timer stopped, apply the complete fallback bundle through the same installer, explicitly restart the web service, verify restoration, resume the timer, and only then record the fallback as active. If restoration itself fails, leave the service stopped and do not mark the candidate active."
+    ],
+    "rollback_sequence": "release.py rollback --release-id <saved-id> verifies the manifest, every bundle hash, and the Git commit object, then installs the retained package/dependencies/systemd/Caddy bundle without rebuilding source. It runs the same explicit service and verification sequence and updates active metadata only on success.",
+    "protected_state_boundary": "The installer release mode touches only the runtime virtual environment, the three named systemd unit files, and /etc/caddy/Caddyfile. It does not copy, replace, back up, or delete /etc/subctl or /var/lib/subctl data outside the release directory and release metadata files.",
+    "verification_surface": "release.py status reports active release commit/package/hash and source checkout HEAD separately; the verifier compares installed subctl wheel contents against the retained wheel and checks dependency consistency, systemd state, Caddy validity, HTTP status codes, refresh/render result, and public smoke completion without showing protected values."
+  },
+  "decision_log": [
+    {
+      "id": "D1",
+      "choice": "Store a commit-bound wheel bundle with a local dependency wheelhouse and exact infrastructure snapshots.",
+      "rejected": "Git-only checkout upgrade and app-wheel-only rollback.",
+      "reason": "The wheelhouse makes ordinary rollback independent of current package-index resolution, and the infrastructure snapshots prevent application/systemd/Caddy version mixing."
+    },
+    {
+      "id": "D2",
+      "choice": "Build from git archive of the exact pushed commit in temporary staging.",
+      "rejected": "Running npm and pip directly against /root/subctl and installing from its mutable checkout.",
+      "reason": "The release helper must not alter or package uncommitted source files."
+    },
+    {
+      "id": "D3",
+      "choice": "Keep the source checkout on the current release-control commit during rollback and use current.json as the authoritative active-release record.",
+      "rejected": "Switching /root/subctl to the old rollback commit.",
+      "reason": "The 780fe63 baseline predates the release helper; keeping current control-plane code preserves the safe deploy/rollback command while status reports the active runtime commit separately."
+    },
+    {
+      "id": "D4",
+      "choice": "Bootstrap 780fe63 with historical runtime relation=inferred and capture the exact current infrastructure files.",
+      "rejected": "Claiming the package is a proven reproduction of code already loaded in the Sep 28 service process.",
+      "reason": "The process start precedes the commit by six minutes and no saved artifact proves the loaded source tree; the user selected the nearest reproducible commit and required the uncertainty to remain explicit."
+    },
+    {
+      "id": "D5",
+      "choice": "Use the existing installer as a verified artifact-application adapter, with an explicit release mode and pre-validation.",
+      "rejected": "Duplicating user/group, Python package, unit installation, and Caddy behavior inside the release helper.",
+      "reason": "One installation implementation reduces drift while the release helper owns lifecycle, state, verification, and fallback."
+    }
+  ],
+  "implementation_artifacts": [
+    {
+      "path": "deploy/release.py",
+      "purpose": "Build, store, verify, deploy, rollback, and report commit-bound release bundles."
+    },
+    {
+      "path": "deploy/install.sh",
+      "purpose": "Add verified release-bundle installation while retaining a separate initial-provisioning path."
+    },
+    {
+      "path": "tests/test_release.py",
+      "purpose": "Exercise observable CLI lifecycle, manifest/hash validation, immutable storage, rollback package reuse, and failed-deploy restoration using temporary state and fake command adapters."
+    },
+    {
+      "path": "docs/deployment.md",
+      "purpose": "Replace the generic /opt/subctl checkout upgrade with the exact ru-vps topology, first-anchor inference, deploy/status/rollback commands, artifact layout, state boundaries, and verification."
+    },
+    {
+      "path": "README.md",
+      "purpose": "Link to the authoritative production release workflow and distinguish it from fresh installation."
+    },
+    {
+      "path": "docs/architecture/intent-production-release-rollback.json and design-production-release-rollback.json",
+      "purpose": "Preserve the accepted requirements and traceable design decisions."
+    },
+    {
+      "path": "C:/Users/EgL/.agents/devices/ru-vps.md and C:/Users/EgL/.agents/skills/proxy-diagnostics/SKILL.md",
+      "purpose": "After verified production deployment, point future agents to the project-owned release workflow and record confirmed paths, release store, restart, and verification rules. Commit these separately from subctl."
+    }
+  ],
+  "modules": [
+    {
+      "name": "Release lifecycle CLI",
+      "responsibility": "Own bootstrap, deploy, rollback, and status state transitions; acquire the deployment lock; select the verified fallback; and report active release provenance.",
+      "interface": "python3 deploy/release.py bootstrap --commit SHA --historical-runtime-relation inferred --note TEXT; deploy --commit SHA [--fallback-release ID]; rollback --release-id ID; status.",
+      "seam": "Public CLI commands with a temporary release root and injected command runner in tests; production runner invokes Git, pip, npm, systemd, Caddy, and HTTP checks."
+    },
+    {
+      "name": "Git archive builder",
+      "responsibility": "Export only tracked files from one Git commit, build frontend assets in staging, produce the app wheel and all resolved runtime dependency wheels, and snapshot matching release infrastructure.",
+      "interface": "Accept a full commit SHA and build timestamp; return a staging bundle plus file/hash metadata or a specific build/provenance error.",
+      "seam": "Temporary source directory and deterministic command runner; the same builder is used for bootstrap and ordinary release creation."
+    },
+    {
+      "name": "Immutable release store",
+      "responsibility": "Publish root-owned write-once release directories, verify every stored file and manifest, write deployment events, and atomically manage current.json.",
+      "interface": "Create, load-and-verify, enumerate, record successful operation, and atomically activate one release ID under /var/lib/subctl/releases.",
+      "seam": "Configurable store root in tests; filesystem operations use staging and atomic rename and reject existing release IDs."
+    },
+    {
+      "name": "Shared installer adapter",
+      "responsibility": "Install only a preverified release bundle's application/dependencies and matching systemd/Caddy assets while preserving protected config/state.",
+      "interface": "deploy/install.sh --release-dir RELEASE_PATH; exits nonzero before service startup if package, unit, or Caddy validation fails.",
+      "seam": "Installer release mode receives a release directory and test command shims; fresh-provision mode remains separate."
+    },
+    {
+      "name": "Production verifier",
+      "responsibility": "Verify runtime package contents and dependencies, web and timer service state, Caddy validity, loopback health, refresh/render completion, public smoke status, and manifest provenance.",
+      "interface": "Return a structured pass/failure result with only status/count/revision/hash fields; never return config values, registry rows, tokens, feed bodies, or tokenized URLs.",
+      "seam": "Injected command/HTTP adapters for tests; production checks use systemctl, caddy, loopback HTTP, the refresh unit, and scripts/smoke-caddy.py."
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Release lifecycle CLI",
+      "owner": "Release lifecycle CLI",
+      "operations": [
+        "bootstrap an inferred 780fe63 recovery anchor without installing it",
+        "deploy a clean pushed commit from its immutable release bundle",
+        "rollback to a named verified release without rebuilding it",
+        "report active release and source checkout as separate revisions"
+      ],
+      "errors": [
+        "dirty or unavailable source commit",
+        "commit not reachable from origin/main",
+        "active refresh or deployment lock contention",
+        "release ID collision with different contents",
+        "manifest or artifact hash mismatch",
+        "installer, restart, health, refresh/render, or public smoke failure",
+        "fallback restoration failure"
+      ],
+      "idempotency": "status is read-only; bootstrap with an already stored identical artifact returns that verified ID; a conflicting repeat never overwrites; deploy of an already active ID fails without changing services; rollback of the active ID performs verification without rebuilding the package."
+    },
+    {
+      "name": "Immutable release store",
+      "owner": "Immutable release store",
+      "operations": [
+        "create a staged release from verified file hashes",
+        "load a release and validate its commit, wheel, dependency wheels, unit files, and Caddyfile",
+        "record an immutable deployment or rollback event",
+        "atomically write current.json after successful verification"
+      ],
+      "errors": [
+        "path traversal or release outside the configured root",
+        "missing or unexpected bundle files",
+        "SHA256 mismatch",
+        "unwritable release storage",
+        "release ID already exists"
+      ],
+      "idempotency": "Artifacts are created once and read-only; events use unique operation IDs; current.json replacement is atomic and happens only after a verified transition."
+    },
+    {
+      "name": "Shared installer adapter",
+      "owner": "Shared installer adapter",
+      "operations": [
+        "verify release bundle before filesystem changes",
+        "install app and dependency wheels without package-index access",
+        "stage and verify systemd units and Caddyfile",
+        "atomically replace matching active infrastructure assets and reload systemd/Caddy"
+      ],
+      "errors": [
+        "missing production config or runtime",
+        "pip dependency resolution or pip check failure",
+        "systemd-analyze verify failure",
+        "Caddy candidate validation failure",
+        "filesystem install failure"
+      ],
+      "idempotency": "Repeated application of the same release produces the same installed files; protected files are never created, replaced, or deleted in release mode."
+    },
+    {
+      "name": "Production verification",
+      "owner": "Production verifier",
+      "operations": [
+        "explicitly restart subctl-web.service",
+        "check /, /health, and /healthz on 127.0.0.1:12790",
+        "start subctl-refresh.service once and prove provider and render steps completed",
+        "check active subctl-refresh.timer and valid/reloaded Caddy",
+        "run public endpoint smoke checks without emitting secret values",
+        "compare installed application files and wheelhouse dependencies with the selected manifest"
+      ],
+      "errors": [
+        "service inactive or unexpected main process state",
+        "health endpoint non-200 or unreachable",
+        "provider refresh or render failure",
+        "Caddy validation/reload failure",
+        "public endpoint failure",
+        "installed package or dependency mismatch"
+      ],
+      "idempotency": "Health and provenance checks are read-only; refresh/render is executed once per deployment transaction and is not repeated during ordinary status checks."
+    }
+  ],
+  "state_machines": [
+    {
+      "name": "Production release lifecycle",
+      "states": [
+        "UNINITIALIZED",
+        "ANCHOR_STORED",
+        "ARTIFACT_STORED",
+        "INSTALLING",
+        "VERIFYING",
+        "ACTIVE",
+        "RESTORING",
+        "RESTORED",
+        "RECOVERY_FAILED"
+      ],
+      "transitions": [
+        {
+          "from": "UNINITIALIZED",
+          "event": "bootstrap verified 780fe63 bundle and live infrastructure snapshot",
+          "to": "ANCHOR_STORED",
+          "guard": "The source commit exists, the tree is clean, package and infra hashes verify, and provenance is explicitly inferred.",
+          "action": "Store the root-owned rollback anchor without installing it or changing services."
+        },
+        {
+          "from": "ANCHOR_STORED",
+          "event": "target bundle built and verified",
+          "to": "ARTIFACT_STORED",
+          "guard": "The exact pushed target commit builds successfully and the anchor is loadable.",
+          "action": "Store a new immutable package bundle; leave production untouched."
+        },
+        {
+          "from": "ACTIVE",
+          "event": "next target bundle built and verified",
+          "to": "ARTIFACT_STORED",
+          "guard": "current.json and target bundle hashes verify and source is clean.",
+          "action": "Retain the current active release as the automatic fallback."
+        },
+        {
+          "from": "ARTIFACT_STORED",
+          "event": "preflight succeeds and existing services are quiesced",
+          "to": "INSTALLING",
+          "guard": "Refresh service is not active, timer is paused, and package/systemd/Caddy candidates validate.",
+          "action": "Stop web execution and apply one bundle through the shared installer."
+        },
+        {
+          "from": "INSTALLING",
+          "event": "all package and infra assets applied",
+          "to": "VERIFYING",
+          "guard": "pip check, daemon reload, Caddy validation/reload, and explicit web restart succeeded.",
+          "action": "Run health, refresh/render, public smoke, and provenance checks."
+        },
+        {
+          "from": "VERIFYING",
+          "event": "all acceptance checks pass",
+          "to": "ACTIVE",
+          "guard": "All required statuses are successful and installed files match the target manifest.",
+          "action": "Resume the timer and atomically write current.json and the success event."
+        },
+        {
+          "from": "INSTALLING",
+          "event": "installation or service activation fails",
+          "to": "RESTORING",
+          "guard": "A previously verified fallback release exists.",
+          "action": "Keep the timer stopped and apply the full fallback bundle before starting services."
+        },
+        {
+          "from": "VERIFYING",
+          "event": "health, refresh/render, smoke, or provenance fails",
+          "to": "RESTORING",
+          "guard": "A previously verified fallback release exists.",
+          "action": "Do not activate the candidate; restore matching package and infra from the fallback."
+        },
+        {
+          "from": "RESTORING",
+          "event": "fallback installation and recovery checks pass",
+          "to": "RESTORED",
+          "guard": "The restored web service, Caddy, timer, and fallback package provenance verify.",
+          "action": "Resume the timer and record the fallback as active with a rollback event."
+        },
+        {
+          "from": "RESTORING",
+          "event": "fallback cannot be verified",
+          "to": "RECOVERY_FAILED",
+          "guard": "Any required restoration step failed.",
+          "action": "Keep subctl-web stopped, preserve the last verified current.json, report the exact failing step, and provide the saved release ID for operator recovery."
+        },
+        {
+          "from": "RESTORED",
+          "event": "a later target bundle builds and verifies",
+          "to": "ARTIFACT_STORED",
+          "guard": "The release helper control-plane checkout is still clean and pushed.",
+          "action": "Use the restored release as the next deployment fallback."
+        }
+      ]
+    }
+  ],
+  "failure_handling": [
+    {
+      "failure": "A source commit is dirty, absent from origin/main, or not the commit named in the release manifest.",
+      "response": "Reject before creating an artifact or changing production; do not package the worktree."
+    },
+    {
+      "failure": "A wheel, dependency wheel, systemd file, Caddyfile, or manifest hash fails verification.",
+      "response": "Reject the release before installation and retain all existing releases unchanged."
+    },
+    {
+      "failure": "Caddy or systemd candidate validation fails.",
+      "response": "Reject before replacing active infrastructure files."
+    },
+    {
+      "failure": "The target package, restart, health, refresh/render, public smoke, or provenance check fails after application begins.",
+      "response": "Stop target activity and restore the complete saved fallback package, dependencies, units, and Caddy snapshot; restart and verify the fallback before marking it active."
+    },
+    {
+      "failure": "Fallback installation or verification also fails.",
+      "response": "Leave the web service stopped, keep active metadata on the last verified release, and report an explicit recovery failure rather than claiming rollback succeeded."
+    },
+    {
+      "failure": "The user requests the historical first release revision.",
+      "response": "Report 780fe63 as an inferred nearest reproducible baseline and never claim that it proves the exact code previously loaded in process memory."
+    }
+  ],
+  "traceability": [
+    {
+      "intent_ref": "I1",
+      "design_refs": ["Immutable release store", "Release lifecycle CLI", "Immutable release store"]
+    },
+    {
+      "intent_ref": "I2",
+      "design_refs": ["Git archive builder", "Release lifecycle CLI"]
+    },
+    {
+      "intent_ref": "I3",
+      "design_refs": ["Immutable release store", "Release lifecycle CLI"]
+    },
+    {
+      "intent_ref": "I4",
+      "design_refs": ["Shared installer adapter", "Production verifier", "Production release lifecycle"]
+    },
+    {
+      "intent_ref": "I5",
+      "design_refs": ["Shared installer adapter", "selected_architecture"]
+    },
+    {
+      "intent_ref": "I6",
+      "design_refs": ["Immutable release store", "Production verifier", "Production release lifecycle"]
+    },
+    {
+      "intent_ref": "I7",
+      "design_refs": ["Release lifecycle CLI", "selected_architecture"]
+    },
+    {
+      "intent_ref": "I8",
+      "design_refs": ["Immutable release store", "Git archive builder", "D4"]
+    }
+  ],
+  "implementation_plan": [
+    "Complete one baseline workflow that verifies package manifest contents, hashes, immutable storage, and release IDs using a temporary repository and release root.",
+    "Add the release-mode installer with package/dependency install and prevalidated systemd/Caddy snapshots, preserving the separate fresh-install mode.",
+    "Add the promotion lifecycle that serializes deployments, pauses services, applies a bundle, verifies it, writes active metadata, and restores a fallback on failure.",
+    "Update docs/deployment.md and README.md with topology, inferred bootstrap history, configuration/state boundaries, exact deploy/status/rollback commands, and verification.",
+    "Run the full backend suite and frontend build on a compatible Linux/Python environment; run diff checks; commit and push intended subctl changes.",
+    "On ru-vps, verify clean source and pushed commit, create the 780fe63 inferred rollback anchor, then deploy the pushed target commit using the helper.",
+    "After successful production verification, update only ru-vps.md and proxy-diagnostics/SKILL.md in the existing agent-context repository and make a separate targeted commit."
+  ],
+  "verification_plan": [
+    {
+      "check": "Architect-first Gate 1 and Gate 2 generic validators",
+      "evidence": "SOUND reports for the accepted intent and this traced design artifact."
+    },
+    {
+      "check": "Release lifecycle tests on Linux",
+      "evidence": "Public CLI tests prove exact commit mapping, SHA verification, write-once artifact behavior, package reuse on rollback, and fallback after a simulated verification failure."
+    },
+    {
+      "check": "Project checks",
+      "evidence": "pytest -q, npm ci && npm run build, and git diff --check pass on the exact source commit before it is pushed for deployment."
+    },
+    {
+      "check": "Production release and provenance",
+      "evidence": "current.json, manifest, package SHA256, installed wheel contents, dependency check, systemd unit hashes, Caddy hash, source checkout HEAD, and active release ID agree; baseline provenance remains inferred."
+    },
+    {
+      "check": "Production health and smoke",
+      "evidence": "subctl-web.service and timer active; /, /health, and /healthz are HTTP 200; one refresh service run succeeds through provider refresh and render; Caddy validates/reloads; public smoke endpoints return non-empty successful responses; no secret values are printed."
+    }
+  ],
+  "definition_of_done": [
+    "One documented official production deploy and rollback workflow exists and uses the exact Git commit plus immutable package.",
+    "The Release N anchor is built from 780fe63, records the wheel SHA256 and exact matching infra snapshots, and labels historical runtime relation as inferred.",
+    "The target pushed commit is installed from its retained package, with matching dependencies/systemd/Caddy, explicit web restart, and successful production verification.",
+    "The rollback helper accepts a saved release ID, verifies hashes, and installs the retained artifacts without rebuilding old source.",
+    "Project changes are committed and pushed; agent-context changes are committed separately after verification; unrelated agent-context changes remain unstaged and uncommitted."
+  ],
+  "open_questions": []
+}

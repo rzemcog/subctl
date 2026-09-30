@@ -1,0 +1,112 @@
+{
+  "kind": "intent",
+  "schema_version": "0.1",
+  "id": "intent-production-release-rollback",
+  "title": "Immutable production releases and complete rollback for subctl",
+  "problem": "Production currently has a source checkout separate from its runtime, no retained immutable package for rollback, incomplete infrastructure restoration, and a web process that is not restarted by enable --now. The generic deployment guide does not match the confirmed ru-vps paths.",
+  "outcome": "Each production release is traceable to one Git commit and one immutable installable package with a verified SHA256. Operators can deploy and restore a complete release, including its systemd and Caddy configuration, and can verify which release is active.",
+  "actors": [
+    {
+      "name": "Production operator",
+      "responsibility": "Select a committed release, deploy it, verify the active release, and restore a known release when needed."
+    },
+    {
+      "name": "subctl production services",
+      "responsibility": "Run the package and matching service/publication configuration recorded for the active release."
+    },
+    {
+      "name": "Subscription clients",
+      "responsibility": "Continue receiving valid published profiles during and after a release operation."
+    }
+  ],
+  "in_scope": [
+    "Define one official workflow for the confirmed topology: /root/subctl is source and /opt/subctl is runtime.",
+    "Build an installable package from an exact clean, committed Git revision and retain a manifest that binds commit, package filename, SHA256, release identifier, and build/deployment times.",
+    "Bootstrap the first rollback anchor from commit 780fe63 as the nearest reproducible Git baseline to the working production process, explicitly classifying its relation to the in-memory process as inferred rather than proven.",
+    "Retain the previous complete release, including its package, systemd unit files, rendered Caddy configuration, and metadata.",
+    "Deploy and restore only from verified retained releases; restore application and matching infrastructure as one release.",
+    "Explicitly restart subctl-web after package installation and verify production health, refresh/render behavior, publication paths, and release provenance.",
+    "Update project documentation and, after production verification, update the relevant local agent context in a separate commit.",
+    "Commit and push only intended subctl project files; keep unrelated working-tree changes out of commits."
+  ],
+  "out_of_scope": [
+    "Changing protected production configuration, credentials, user registry, or generated subscription state as part of install or rollback.",
+    "Changing Mihomo, firewall, routing, TLS, or external DNS configuration.",
+    "Treating a source commit or a package without a verified manifest and hash as a complete release."
+  ],
+  "invariants": [
+    {
+      "id": "I1",
+      "claim": "Every active or retained production release has one unambiguous Git commit to immutable package mapping, and the package hash verifies.",
+      "enforcement": "Release metadata records both identifiers and SHA256; deploy and rollback verify the manifest and package before installation."
+    },
+    {
+      "id": "I2",
+      "claim": "A package is built from the exact committed revision named by its manifest, with no uncommitted source included.",
+      "enforcement": "The official workflow requires a clean source tree, materializes the named Git revision, and records that revision before building."
+    },
+    {
+      "id": "I3",
+      "claim": "Release artifacts are write-once, and ordinary rollback installs a retained package rather than rebuilding an old commit.",
+      "enforcement": "Unique release identifiers, collision rejection, immutable permissions, manifest checks, and the documented rollback command enforce this."
+    },
+    {
+      "id": "I4",
+      "claim": "A running release never combines application code with systemd or Caddy assets from another release.",
+      "enforcement": "Deployment and rollback select one verified release bundle, validate Caddy, reload systemd/Caddy as required, then explicitly restart the web service."
+    },
+    {
+      "id": "I5",
+      "claim": "Protected production configuration and shared user/generated state survive deployment and rollback unchanged.",
+      "enforcement": "The workflow installs only the package and tracked infrastructure assets; before/after metadata checks observe protected paths without exposing their contents."
+    },
+    {
+      "id": "I6",
+      "claim": "A release is marked active only after all required verification passes.",
+      "enforcement": "The active-release record is written after service, health, Caddy, refresh/render, and provenance checks succeed; failure restores the previous release."
+    },
+    {
+      "id": "I7",
+      "claim": "The production source checkout and the code actually deployed cannot be confused.",
+      "enforcement": "The official workflow either aligns the checkout to the selected release commit or records the deployed commit separately as authoritative active-release metadata."
+    },
+    {
+      "id": "I8",
+      "claim": "The first rollback anchor uses commit 780fe63 as the nearest reproducible Git baseline to the working production process, and does not claim that this proves the exact code loaded in memory.",
+      "enforcement": "The initial release manifest and project documentation identify 780fe63, mark its runtime relationship as inferred, and explain the timestamp evidence and missing historical artifact; package hash and matching infrastructure snapshots are still verified exactly."
+    }
+  ],
+  "failure_model": [
+    {
+      "failure": "The source tree is dirty, the commit is unavailable, or package provenance cannot be verified.",
+      "response": "Stop before changing production and report the specific missing or mismatched evidence."
+    },
+    {
+      "failure": "Package creation or immutable release storage fails.",
+      "response": "Leave active services and production configuration/state untouched; do not begin installation."
+    },
+    {
+      "failure": "Package hash, release metadata, or infrastructure snapshot validation fails.",
+      "response": "Reject the release before applying any of its components."
+    },
+    {
+      "failure": "Installation, Caddy validation, service restart, or required health/smoke verification fails.",
+      "response": "Restore the prior retained release as one unit, explicitly restart affected services, and verify the restored release before reporting recovery."
+    },
+    {
+      "failure": "The first baseline's relationship to the running process cannot be proven from historical evidence.",
+      "response": "Use only the operator-approved nearest reproducible commit 780fe63, mark the provenance as inferred, and never report it as an exact historical runtime match."
+    }
+  ],
+  "acceptance_signals": [
+    "One documented production deploy command and one documented rollback command are authoritative for ru-vps.",
+    "The release manifest binds the exact Git commit to the immutable package filename and a verified SHA256.",
+    "The first baseline is built from commit 780fe63 and its relation to the previously running process is explicitly marked inferred; the previous complete release is retained before the target is applied.",
+    "The target package is installed from its retained artifact; systemd and Caddy match that same release; subctl-web is explicitly restarted.",
+    "Systemd activity, web health endpoints, refresh/render execution, subscription/publication smoke checks, and package/source provenance pass with current evidence.",
+    "A failed verification restores a complete saved release without leaving mixed application and infrastructure versions.",
+    "Project deployment documentation and relevant agent context describe the confirmed topology and the same official workflow.",
+    "Intended project changes are committed and pushed; agent-context changes are committed separately without staging unrelated edits."
+  ],
+  "open_questions": []
+}
