@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
 import urllib.error
 import urllib.request
 import uuid
@@ -28,7 +27,6 @@ from typing import Any, Iterable
 
 RELEASE_ROOT = Path(os.environ.get("SUBCTL_RELEASE_ROOT", "/var/lib/subctl/releases"))
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
-APP_DIR = Path(os.environ.get("SUBCTL_APP_DIR", "/root/subctl"))
 VENV_DIR = Path(os.environ.get("SUBCTL_VENV_DIR", "/opt/subctl/venv"))
 CONFIG_FILE = Path(os.environ.get("SUBCTL_CONFIG_FILE", "/etc/subctl/config.yaml"))
 UNIT_DIR = Path("/etc/systemd/system")
@@ -48,10 +46,6 @@ class ReleaseError(RuntimeError):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
@@ -129,6 +123,21 @@ def _bundle_sha256(records: dict[str, dict[str, Any]]) -> str:
         digest.update(str(record["size"]).encode("ascii"))
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def _validate_release_root(release_root: Path, *, create: bool) -> None:
+    if release_root.is_symlink():
+        raise ReleaseError("release store cannot be a symlink")
+    if create:
+        release_root.mkdir(parents=True, exist_ok=True, mode=0o750)
+    if not release_root.is_dir():
+        raise ReleaseError(f"release store is not a directory: {release_root}")
+    if os.name == "posix":
+        info = release_root.stat()
+        if os.geteuid() == 0 and info.st_uid != 0:
+            raise ReleaseError("root-owned release operations require a root-owned release store")
+        if stat.S_IMODE(info.st_mode) & 0o022:
+            raise ReleaseError("release store must not be group- or world-writable")
 
 
 def _manifest_for(
@@ -214,7 +223,7 @@ def publish_bundle(
         built_at=built_at,
     )
 
-    release_root.mkdir(parents=True, exist_ok=True, mode=0o750)
+    _validate_release_root(release_root, create=True)
     target = release_root / manifest["release_id"]
     if target.exists():
         existing = verify_bundle(target, expected_commit=git_commit)
@@ -251,6 +260,7 @@ def verify_bundle(release_dir: Path, *, expected_commit: str | None = None) -> d
     """Validate bundle shape, every payload hash, commit binding, and release ID."""
     if release_dir.is_symlink():
         raise ReleaseError("release directory cannot be a symlink")
+    _validate_release_root(release_dir.parent, create=False)
     release_dir = release_dir.resolve(strict=True)
     manifest_path = release_dir / "manifest.json"
     if not release_dir.is_dir() or manifest_path.is_symlink() or not manifest_path.is_file():
@@ -259,6 +269,8 @@ def verify_bundle(release_dir: Path, *, expected_commit: str | None = None) -> d
         protected_paths = [release_dir, manifest_path, *release_dir.rglob("*")]
         for path in protected_paths:
             if path.is_dir() or path.is_file():
+                if os.geteuid() == 0 and path.stat().st_uid != 0:
+                    raise ReleaseError(f"release contains a non-root-owned path: {path.relative_to(release_dir.parent)}")
                 if stat.S_IMODE(path.stat().st_mode) & 0o222:
                     raise ReleaseError(f"release contains a writable path: {path.relative_to(release_dir.parent)}")
     try:
@@ -464,7 +476,7 @@ def build_bundle(
 
 @contextmanager
 def deployment_lock(release_root: Path = RELEASE_ROOT):
-    release_root.mkdir(parents=True, exist_ok=True, mode=0o750)
+    _validate_release_root(release_root, create=True)
     lock_path = release_root / ".deploy.lock"
     stream = lock_path.open("a+")
     try:
@@ -510,8 +522,12 @@ def _atomic_json(path: Path, data: dict[str, Any], *, immutable: bool = False) -
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
+    if path.is_symlink():
+        raise ReleaseError(f"release metadata cannot be a symlink: {path.name}")
     if not path.exists():
         return None
+    if not path.is_file():
+        raise ReleaseError(f"release metadata is not a regular file: {path.name}")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -582,6 +598,17 @@ def _validate_production_prerequisites(
         raise ReleaseError(f"{REFRESH_SERVICE} is currently running; wait for it to finish")
     if require_caddy_active and not _is_active("caddy.service"):
         raise ReleaseError("caddy.service is not active")
+
+
+def _validate_release_assets(bundle: Path) -> None:
+    _run(
+        [
+            "systemd-analyze",
+            "verify",
+            *[str(bundle / "systemd" / name) for name in REQUIRED_UNITS],
+        ]
+    )
+    _run(["caddy", "validate", "--config", str(bundle / "Caddyfile")])
 
 
 def _validate_live_snapshot(commit: str, domain: str, snapshot_dir: Path) -> None:
@@ -731,6 +758,8 @@ def _write_event(
     restored_from: str | None = None,
 ) -> None:
     events_dir = release_root / "events"
+    if events_dir.is_symlink():
+        raise ReleaseError("release events directory cannot be a symlink")
     events_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
     event = {
         "operation_id": uuid.uuid4().hex,
@@ -779,8 +808,21 @@ def _apply_bundle(bundle: Path) -> None:
 def _stop_for_install() -> None:
     if _is_active(REFRESH_SERVICE):
         raise ReleaseError(f"{REFRESH_SERVICE} started during deployment preflight")
+    timer_was_active = _is_active(REFRESH_TIMER)
+    web_was_active = _is_active(WEB_SERVICE)
     _systemctl("stop", REFRESH_TIMER)
-    _systemctl("stop", WEB_SERVICE)
+    if _is_active(REFRESH_SERVICE):
+        if timer_was_active:
+            _resume_timer()
+        raise ReleaseError(f"{REFRESH_SERVICE} started while the refresh timer was stopping")
+    try:
+        _systemctl("stop", WEB_SERVICE)
+    except Exception:
+        if web_was_active and not _is_active(WEB_SERVICE):
+            _systemctl("start", WEB_SERVICE)
+        if timer_was_active:
+            _resume_timer()
+        raise
 
 
 def _resume_timer() -> None:
@@ -839,7 +881,7 @@ def deploy_release(
 ) -> dict[str, Any]:
     _require_root()
     candidate_bundle, candidate_manifest = _load_release(release_id, release_root)
-    current, current_bundle, current_manifest = _load_current_release(release_root)
+    current, current_bundle, _ = _load_current_release(release_root)
     if current and current.get("release_id") == release_id:
         return _verify_runtime(candidate_bundle, candidate_manifest, include_smoke=False)
 
@@ -854,11 +896,13 @@ def deploy_release(
         require_active_services=(operation == "deployment"),
         require_caddy_active=(operation == "deployment"),
     )
+    _validate_release_assets(candidate_bundle)
+    _validate_release_assets(fallback_bundle)
+    _stop_for_install()
     try:
-        _stop_for_install()
         _apply_bundle(candidate_bundle)
         _systemctl("restart", WEB_SERVICE)
-        package_info = _run_refresh_and_smoke(candidate_bundle, candidate_manifest)
+        _run_refresh_and_smoke(candidate_bundle, candidate_manifest)
         _resume_timer()
         if not _is_active(REFRESH_TIMER):
             raise ReleaseError(f"{REFRESH_TIMER} is not active after deployment")
