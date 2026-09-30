@@ -171,9 +171,9 @@
     },
     {
       "name": "Production verifier",
-      "responsibility": "Verify runtime package contents and dependencies, web and timer service state, Caddy validity, loopback health, refresh/render completion, public smoke status, and manifest provenance.",
+      "responsibility": "Verify runtime package contents and dependencies, web and timer service state, Caddy validity, loopback health, refresh/render completion, canonical public subscription routes through local Caddy, and manifest provenance.",
       "interface": "Return a structured pass/failure result with only status/count/revision/hash fields; never return config values, registry rows, tokens, feed bodies, or tokenized URLs.",
-      "seam": "Injected command/HTTP adapters for tests; production checks use systemctl, caddy, loopback HTTP, the refresh unit, and scripts/smoke-caddy.py."
+      "seam": "Injected command/HTTP adapters for tests; production checks use systemctl, caddy, loopback HTTP, the refresh unit, and scripts/smoke-caddy.py. The smoke process resolves the configured hostname to loopback while preserving HTTP Host and TLS SNI, avoiding dependence on public-IP hairpin routing."
     }
   ],
   "interfaces": [

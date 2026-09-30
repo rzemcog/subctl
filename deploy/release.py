@@ -745,7 +745,12 @@ def _verify_runtime(bundle: Path, manifest: dict[str, Any], *, include_smoke: bo
     _run(["caddy", "validate", "--config", str(CADDY_FILE)])
     _check_http_health()
     if include_smoke:
-        _run([str(VENV_DIR / "bin" / "python"), str(SOURCE_ROOT / "scripts" / "smoke-caddy.py")])
+        smoke_env = os.environ.copy()
+        smoke_env["SUBCTL_SMOKE_CONNECT_IP"] = "127.0.0.1"
+        _run(
+            [str(VENV_DIR / "bin" / "python"), str(SOURCE_ROOT / "scripts" / "smoke-caddy.py")],
+            env=smoke_env,
+        )
     return package_info
 
 
