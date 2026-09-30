@@ -384,7 +384,6 @@ def _build_profile(
                     "max-failed-times": config.render.healthcheck_max_failed_times,
                     "tolerance": config.render.healthcheck_tolerance_milliseconds,
                     "lazy": config.render.healthcheck_lazy,
-                    "hidden": True,
                 },
                 {
                     "name": "PROVIDER-AUTO-SEED",
@@ -397,7 +396,6 @@ def _build_profile(
                     "max-failed-times": config.render.healthcheck_max_failed_times,
                     "tolerance": config.render.healthcheck_tolerance_milliseconds,
                     "lazy": config.render.healthcheck_lazy,
-                    "hidden": True,
                 },
             ]
             available_groups.append("PROVIDER-AUTO")

@@ -148,6 +148,8 @@ def test_mihomo_loads_generated_profile_resolves_provider_host_and_supports_pin_
         )
         assert live["type"] == "URLTest"
         assert seed["type"] == "URLTest"
+        assert live.get("hidden", False) is False
+        assert seed.get("hidden", False) is False
         assert isinstance(live["now"], str)
         assert isinstance(seed["now"], str)
 

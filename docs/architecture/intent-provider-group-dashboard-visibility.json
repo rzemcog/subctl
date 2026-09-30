@@ -1,0 +1,78 @@
+{
+  "kind": "intent",
+  "schema_version": "0.1",
+  "id": "intent-provider-group-dashboard-visibility",
+  "title": "Expose automatic provider groups in the Mihomo dashboard",
+  "problem": "The resilient profile keeps LIVE and SEED provider groups nested under PROVIDER-AUTO, but marking them hidden prevents Clash Party from listing them as separate groups with their provider-scoped nodes. Users cannot inspect or pin a node from either group in the dashboard.",
+  "outcome": "Clash Party lists PROVIDER-AUTO, PROVIDER-AUTO-LIVE, and PROVIDER-AUTO-SEED. Opening each automatic group shows its real provider nodes with their original names, and the user can pin and unpin a node through the dashboard.",
+  "actors": [
+    {
+      "name": "Profile user",
+      "responsibility": "Inspect the LIVE or SEED nodes independently and use native pin/unpin controls."
+    },
+    {
+      "name": "Service operator",
+      "responsibility": "Publish a profile whose group visibility and membership match the provider topology."
+    }
+  ],
+  "in_scope": [
+    "Expose PROVIDER-AUTO-LIVE and PROVIDER-AUTO-SEED in the default Clash Party group list.",
+    "Keep LIVE and SEED node membership scoped to their respective providers and preserve original node names.",
+    "Keep both groups automatic url-test groups and support native fixed pinning followed by unpinning.",
+    "Preserve PROVIDER-AUTO fallback recovery, fetch routing, GLOBAL membership, and existing recovery behavior.",
+    "Add generated-profile regression coverage and verify the real dashboard flow when available."
+  ],
+  "out_of_scope": [
+    "Changing the Clash Party application or its dashboard implementation.",
+    "Changing provider recovery or fetch routing to create UI workarounds.",
+    "Changing Cloudflare, DNS, Caddy, or unrelated production networking."
+  ],
+  "invariants": [
+    {
+      "id": "I1",
+      "claim": "PROVIDER-AUTO-LIVE and PROVIDER-AUTO-SEED are not hidden from the default dashboard group list.",
+      "enforcement": "Renderer regression checks assert the groups do not set hidden=true; Mihomo API and dashboard observations verify visibility."
+    },
+    {
+      "id": "I2",
+      "claim": "LIVE remains a url-test group over only the LIVE provider, and SEED remains a url-test group over only the SEED provider, with original node names.",
+      "enforcement": "Generated profile assertions and runtime API membership checks verify group types and node membership."
+    },
+    {
+      "id": "I3",
+      "claim": "Pinning temporarily fixes a selected node and unpinning restores automatic url-test selection for both groups.",
+      "enforcement": "Mihomo runtime checks verify now/fixed transitions; the installed Clash Party dashboard acceptance flow verifies the actual UI controls."
+    },
+    {
+      "id": "I4",
+      "claim": "PROVIDER-AUTO fallback, PRIVATE/AUTO/BASE/PROXY/DIRECT structure, fetch routing, and GLOBAL remain free of individual provider nodes.",
+      "enforcement": "Existing recovery tests and generated profile topology assertions remain unchanged and pass."
+    },
+    {
+      "id": "I5",
+      "claim": "Production-only credentials and profile data do not enter tracked source or artifacts.",
+      "enforcement": "Artifacts and tests use neutral fixture names and values; review checks the complete diff."
+    }
+  ],
+  "failure_model": [
+    {
+      "failure": "The dashboard omits a group because it is marked hidden.",
+      "response": "Leave hidden unset for the two user-facing automatic provider groups and assert that property in regression tests."
+    },
+    {
+      "failure": "A visible group does not resolve its provider nodes.",
+      "response": "Keep provider-scoped use references and reject acceptance unless the API and dashboard show the expected membership."
+    },
+    {
+      "failure": "The dashboard displays a group but its pin/unpin controls do not preserve automatic behavior.",
+      "response": "Do not claim UI acceptance; verify the fixed state transition in the installed dashboard and Mihomo API."
+    }
+  ],
+  "acceptance_signals": [
+    "Generated resilient profiles expose both groups without hidden=true, keep type url-test, and bind LIVE and SEED to their own providers.",
+    "Mihomo API returns each group with its real scoped nodes, now, and fixed fields; pinning sets fixed to the chosen node and unpinning clears it.",
+    "The installed Clash Party dashboard separately displays the LIVE and SEED groups and their original node names, and completes pin/unpin for both.",
+    "Existing recovery and fetch-routing regression/runtime checks pass without topology changes."
+  ],
+  "open_questions": []
+}

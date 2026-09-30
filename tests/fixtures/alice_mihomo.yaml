@@ -102,7 +102,6 @@ proxy-groups:
   max-failed-times: 2
   tolerance: 50
   lazy: true
-  hidden: true
 - name: PROVIDER-AUTO-SEED
   type: url-test
   use:
@@ -114,7 +113,6 @@ proxy-groups:
   max-failed-times: 2
   tolerance: 50
   lazy: true
-  hidden: true
 - name: FETCH-PRIVATE
   type: fallback
   proxies:
