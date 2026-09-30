@@ -9,10 +9,15 @@ import pytest
 
 RELEASE_SCRIPT = Path(__file__).resolve().parents[1] / "deploy" / "release.py"
 INSTALLER_SCRIPT = Path(__file__).resolve().parents[1] / "deploy" / "install.sh"
+SMOKE_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "smoke-caddy.py"
 _SPEC = importlib.util.spec_from_file_location("subctl_release", RELEASE_SCRIPT)
 release = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None
 _SPEC.loader.exec_module(release)
+_SMOKE_SPEC = importlib.util.spec_from_file_location("subctl_smoke", SMOKE_SCRIPT)
+smoke = importlib.util.module_from_spec(_SMOKE_SPEC)
+assert _SMOKE_SPEC.loader is not None
+_SMOKE_SPEC.loader.exec_module(smoke)
 
 
 def make_staging_dir(tmp_path: Path) -> Path:
@@ -36,6 +41,45 @@ def test_release_installer_selects_caddyfile_adapter_for_staged_config():
     installer = INSTALLER_SCRIPT.read_text(encoding="utf-8")
 
     assert 'caddy validate --adapter caddyfile --config "$staged_caddy"' in installer
+
+
+def test_smoke_connect_override_resolves_only_public_hostname(monkeypatch):
+    calls = []
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        calls.append((host, args, kwargs))
+        return []
+
+    monkeypatch.setattr(smoke.socket, "getaddrinfo", fake_getaddrinfo)
+    smoke.install_connect_ip_override("subscriptions.example", "127.0.0.1")
+
+    smoke.socket.getaddrinfo("subscriptions.example", 443, type=1)
+    smoke.socket.getaddrinfo("other.example", 80)
+
+    assert calls == [
+        ("127.0.0.1", (443,), {"type": 1}),
+        ("other.example", (80,), {}),
+    ]
+
+
+def test_smoke_connect_override_rejects_non_ip_address():
+    with pytest.raises(ValueError):
+        smoke.install_connect_ip_override("subscriptions.example", "localhost")
+
+
+def test_runtime_verifier_pins_public_smoke_to_loopback(monkeypatch, tmp_path):
+    calls = []
+    package_info = {"application_version": "0.1.0"}
+    monkeypatch.setattr(release, "_is_active", lambda unit: True)
+    monkeypatch.setattr(release, "_verify_installed_assets", lambda manifest: None)
+    monkeypatch.setattr(release, "_verify_installed_application", lambda bundle: package_info)
+    monkeypatch.setattr(release, "_check_http_health", lambda: None)
+    monkeypatch.setattr(release, "_run", lambda command, **kwargs: calls.append((command, kwargs.get("env"))))
+
+    result = release._verify_runtime(tmp_path, {}, include_smoke=True)
+
+    assert result == package_info
+    assert calls[-1][1]["SUBCTL_SMOKE_CONNECT_IP"] == "127.0.0.1"
 
 
 def test_bundle_binds_commit_to_immutable_artifact_and_hashes(tmp_path):

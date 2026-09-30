@@ -100,7 +100,11 @@ restarts `subctl-web.service`, checks `/`, `/health`, and `/healthz`, runs
 `subctl-refresh.service` once, runs the public subscription smoke check, resumes
 `subctl-refresh.timer`, and only then writes `current.json` and the success
 event. The refresh unit's successful completion confirms both provider refresh
-and rendering succeeded.
+and rendering succeeded. The smoke process keeps the configured public URL,
+HTTP Host, and TLS SNI while resolving that hostname to `127.0.0.1` inside the
+check process. This exercises Caddy and every provider and user subscription
+route without relying on the VPS network's public-IP hairpin route. An external
+probe is needed to assess DNS and network reachability from client networks.
 
 `systemctl enable --now subctl-web.service` does **not** restart an already
 running web process. Production releases always issue an explicit restart.
