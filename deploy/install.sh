@@ -6,14 +6,6 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   exit 1
 fi
 
-: "${SUBCTL_DOMAIN:?set SUBCTL_DOMAIN to the public subscription hostname}"
-if [[ "$SUBCTL_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
-  :
-else
-  echo "SUBCTL_DOMAIN must contain only letters, digits, dots and hyphens" >&2
-  exit 1
-fi
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${SUBCTL_APP_DIR:-/opt/subctl}"
 VENV_DIR="${SUBCTL_VENV_DIR:-/opt/subctl/venv}"
@@ -90,6 +82,14 @@ if [[ "${1:-}" == "--release-dir" ]]; then
   fi
   echo "subctl immutable release assets installed; restart and verification are managed by release.py"
   exit 0
+fi
+
+: "${SUBCTL_DOMAIN:?set SUBCTL_DOMAIN to the public subscription hostname}"
+if [[ "$SUBCTL_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  :
+else
+  echo "SUBCTL_DOMAIN must contain only letters, digits, dots and hyphens" >&2
+  exit 1
 fi
 
 if [[ "$ROOT_DIR" != "$APP_DIR" ]]; then
