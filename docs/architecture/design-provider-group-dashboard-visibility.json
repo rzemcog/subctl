@@ -1,0 +1,138 @@
+{
+  "kind": "design",
+  "schema_version": "0.1",
+  "id": "design-provider-group-dashboard-visibility",
+  "derived_from": "intent-provider-group-dashboard-visibility",
+  "modules": [
+    {
+      "name": "Provider-group rendering",
+      "responsibility": "Render the existing LIVE/SEED provider groups so the dashboard can list them separately without changing recovery or fetch topology.",
+      "interface": "Emit visible url-test groups with provider-scoped membership and unmodified source node names.",
+      "seam": "Generated YAML and Mihomo GET /proxies group fields and membership."
+    },
+    {
+      "name": "Dashboard projection and controls",
+      "responsibility": "Project Mihomo policy groups and provider-scoped nodes into the installed Clash Party dashboard, including native pin/unpin actions.",
+      "interface": "List visible groups by default, open a group to inspect its member nodes, fix a chosen node, and clear the fixed choice.",
+      "seam": "Clash Party mihomoGroups default projection plus the actual installed dashboard and Mihomo fixed state."
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Visible provider-group profile",
+      "owner": "Provider-group rendering",
+      "operations": [
+        "render PROVIDER-AUTO-LIVE using only the LIVE provider",
+        "render PROVIDER-AUTO-SEED using only the SEED provider",
+        "leave both groups visible to default dashboard enumeration"
+      ],
+      "errors": [
+        "missing or mismatched provider membership",
+        "accidental hidden group flag",
+        "group type changed from url-test"
+      ],
+      "idempotency": "The same render inputs preserve the same group names, provider scopes, group types, and recovery topology."
+    },
+    {
+      "name": "Dashboard group selection",
+      "owner": "Dashboard projection and controls",
+      "operations": [
+        "list visible groups and resolve member nodes",
+        "pin a selected node in a url-test group",
+        "unpin the group to restore automatic selection"
+      ],
+      "errors": [
+        "group or node absent from the API projection",
+        "fixed selection not reflected by Mihomo",
+        "unpin does not resume automatic selection"
+      ],
+      "idempotency": "Selecting the already fixed node leaves it fixed; clearing an absent fixed value leaves the automatic group unchanged."
+    }
+  ],
+  "state_machines": [
+    {
+      "name": "Automatic group pin lifecycle",
+      "states": [
+        "AUTOMATIC",
+        "PINNED",
+        "AUTOMATIC_AFTER_UNPIN"
+      ],
+      "transitions": [
+        {
+          "from": "AUTOMATIC",
+          "event": "User selects a node in the dashboard",
+          "to": "PINNED",
+          "guard": "The selected node belongs to the opened LIVE or SEED group.",
+          "action": "Mihomo records that node in fixed and keeps it selected despite url-test results."
+        },
+        {
+          "from": "PINNED",
+          "event": "User clears the pin in the dashboard",
+          "to": "AUTOMATIC_AFTER_UNPIN",
+          "guard": "The group is still type url-test.",
+          "action": "Mihomo clears fixed and resumes url-test selection."
+        },
+        {
+          "from": "AUTOMATIC_AFTER_UNPIN",
+          "event": "url-test evaluates members",
+          "to": "AUTOMATIC",
+          "guard": "The group has at least one eligible member.",
+          "action": "Mihomo selects according to its automatic health-check behavior."
+        }
+      ]
+    }
+  ],
+  "failure_handling": [
+    {
+      "failure": "Clash Party excludes a provider group from its default listing.",
+      "response": "The renderer must not mark LIVE or SEED hidden; profile tests fail if it does."
+    },
+    {
+      "failure": "The API contains members but the installed dashboard does not show them.",
+      "response": "Treat UI acceptance as failed and retain evidence distinguishing API support from UI discoverability."
+    },
+    {
+      "failure": "Pin/unpin is not available or does not transition fixed correctly in the installed UI.",
+      "response": "Do not replace url-test with select or claim success; report the missing UI behavior for a separately scoped fix."
+    }
+  ],
+  "traceability": [
+    {
+      "intent_ref": "I1",
+      "design_refs": [
+        "Provider-group rendering",
+        "Visible provider-group profile"
+      ]
+    },
+    {
+      "intent_ref": "I2",
+      "design_refs": [
+        "Provider-group rendering",
+        "Visible provider-group profile"
+      ]
+    },
+    {
+      "intent_ref": "I3",
+      "design_refs": [
+        "Dashboard projection and controls",
+        "Dashboard group selection",
+        "Automatic group pin lifecycle"
+      ]
+    },
+    {
+      "intent_ref": "I4",
+      "design_refs": [
+        "Provider-group rendering",
+        "Visible provider-group profile"
+      ]
+    },
+    {
+      "intent_ref": "I5",
+      "design_refs": [
+        "Provider-group rendering",
+        "Visible provider-group profile"
+      ]
+    }
+  ],
+  "open_questions": []
+}

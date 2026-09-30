@@ -72,17 +72,20 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
         "PROVIDER-AUTO-SEED",
     ]
     assert groups["PROVIDER-AUTO"]["empty-fallback"] == "REJECT"
+    assert groups["PROVIDER-AUTO-LIVE"]["type"] == "url-test"
     assert groups["PROVIDER-AUTO-LIVE"]["use"] == ["provider"]
+    assert groups["PROVIDER-AUTO-LIVE"].get("hidden", False) is False
     assert groups["PROVIDER-AUTO-LIVE"]["interval"] == 15
     assert groups["PROVIDER-AUTO-LIVE"]["timeout"] == 3000
     assert groups["PROVIDER-AUTO-LIVE"]["max-failed-times"] == 2
     assert groups["PROVIDER-AUTO-LIVE"]["tolerance"] == 50
     assert groups["PROVIDER-AUTO-LIVE"]["empty-fallback"] == "REJECT"
     assert groups["PROVIDER-AUTO-LIVE"]["lazy"] is True
+    assert groups["PROVIDER-AUTO-SEED"]["type"] == "url-test"
     assert groups["PROVIDER-AUTO-SEED"]["use"] == ["provider-seed"]
+    assert groups["PROVIDER-AUTO-SEED"].get("hidden", False) is False
     assert groups["PROVIDER-AUTO-SEED"]["tolerance"] == 50
     assert groups["PROVIDER-AUTO-SEED"]["empty-fallback"] == "REJECT"
-    assert groups["PROVIDER-AUTO-SEED"]["hidden"] is True
     assert groups["FETCH-PRIVATE"]["proxies"] == [
         "PROVIDER-AUTO-SEED",
         "DIRECT",
