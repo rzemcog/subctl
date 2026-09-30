@@ -128,7 +128,7 @@ def _vless_proxy(uri: str, index: int) -> dict[str, Any]:
 
         label = _safe_label(unquote(parts.fragment)) or f"node-{index}"
         proxy: dict[str, Any] = {
-            "name": f"SEED | {label}",
+            "name": label,
             "type": "vless",
             "server": server,
             "port": port,
@@ -174,7 +174,7 @@ def _trojan_proxy(uri: str, index: int) -> dict[str, Any]:
 
     label = _safe_label(unquote(parts.fragment)) or f"node-{index}"
     proxy: dict[str, Any] = {
-        "name": f"SEED | {label}",
+        "name": label,
         "type": "trojan",
         "server": server,
         "port": port,

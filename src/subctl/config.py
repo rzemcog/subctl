@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 from copy import deepcopy
 from dataclasses import dataclass
 import re
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 import yaml
@@ -28,6 +30,11 @@ class ProviderConfig:
 class PublicConfig:
     base_url: str
     output_dir: Path
+
+
+@dataclass(frozen=True)
+class MihomoConfig:
+    hosts: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,7 @@ class GatewayConfig:
 class AppConfig:
     provider: ProviderConfig
     public: PublicConfig
+    mihomo: MihomoConfig
     render: RenderConfig
     gateway: GatewayConfig | None
     state_dir: Path
@@ -117,6 +125,7 @@ def load_config(
     provider_data = data["provider"]
     public_data = data["public"]
     render_data = data["render"]
+    mihomo = _load_mihomo_config(data.get("mihomo", {}))
     gateway_data = data.get("gateway")
 
     upstream_url = _require_http_url(
@@ -149,6 +158,7 @@ def load_config(
             ),
         ),
         public=PublicConfig(base_url=base_url.rstrip("/"), output_dir=resolved_output_dir),
+        mihomo=mihomo,
         render=RenderConfig(
             profile_update_interval_seconds=_positive_int(
                 render_data["profile_update_interval_seconds"],
@@ -220,6 +230,70 @@ def require_gateway_config(config: AppConfig) -> GatewayConfig:
             "config missing required gateway section for render-gateway"
         )
     return config.gateway
+
+
+def _load_mihomo_config(value: Any) -> MihomoConfig:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValidationError("mihomo must be a mapping")
+    unknown = sorted(set(value) - {"hosts"})
+    if unknown:
+        raise ValidationError("mihomo contains unsupported field(s): " + ", ".join(unknown))
+
+    hosts = value.get("hosts", {})
+    if hosts is None:
+        hosts = {}
+    if not isinstance(hosts, dict):
+        raise ValidationError("mihomo.hosts must map hostnames to IP addresses")
+
+    normalized: dict[str, str] = {}
+    for hostname, address in hosts.items():
+        key = _normalize_mihomo_hostname(hostname)
+        if key in normalized:
+            raise ValidationError("mihomo.hosts contains duplicate normalized hostnames")
+        if not isinstance(address, str) or not address.strip():
+            raise ValidationError("mihomo.hosts values must be IP address strings")
+        try:
+            parsed_address = ipaddress.ip_address(address.strip())
+        except ValueError as exc:
+            raise ValidationError("mihomo.hosts values must be IP address strings") from exc
+        if getattr(parsed_address, "scope_id", None) is not None:
+            raise ValidationError("mihomo.hosts values must be unscoped IP addresses")
+        normalized[key] = parsed_address.compressed
+
+    return MihomoConfig(hosts=MappingProxyType(normalized))
+
+
+def _normalize_mihomo_hostname(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError("mihomo.hosts keys must be DNS hostnames")
+    hostname = value.strip()
+    if hostname.endswith("."):
+        hostname = hostname[:-1]
+    if not hostname or ":" in hostname or "/" in hostname or "*" in hostname:
+        raise ValidationError("mihomo.hosts keys must be exact DNS hostnames")
+    try:
+        normalized = hostname.encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise ValidationError("mihomo.hosts keys must be valid DNS hostnames") from exc
+    if len(normalized) > 253:
+        raise ValidationError("mihomo.hosts keys must be valid DNS hostnames")
+    labels = normalized.split(".")
+    if any(
+        not label
+        or len(label) > 63
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+        for label in labels
+    ):
+        raise ValidationError("mihomo.hosts keys must be valid DNS hostnames")
+    try:
+        ipaddress.ip_address(normalized)
+    except ValueError:
+        pass
+    else:
+        raise ValidationError("mihomo.hosts keys must be DNS hostnames, not IP addresses")
+    return normalized
 
 
 def _load_gateway_config(value: Any) -> GatewayConfig:

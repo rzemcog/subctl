@@ -68,38 +68,39 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
     assert groups["PRIVATE"]["empty-fallback"] == "REJECT"
     assert groups["PROVIDER-AUTO"]["type"] == "fallback"
     assert groups["PROVIDER-AUTO"]["proxies"] == [
-        "AUTO-PROVIDER-LIVE",
-        "AUTO-PROVIDER-SEED",
+        "PROVIDER-AUTO-LIVE",
+        "PROVIDER-AUTO-SEED",
     ]
-    assert groups["AUTO-PROVIDER-LIVE"]["include-all-providers"] is True
-    assert groups["AUTO-PROVIDER-LIVE"]["filter"] == "^LIVE "
-    assert groups["AUTO-PROVIDER-LIVE"]["interval"] == 15
-    assert groups["AUTO-PROVIDER-LIVE"]["timeout"] == 3000
-    assert groups["AUTO-PROVIDER-LIVE"]["max-failed-times"] == 2
-    assert groups["AUTO-PROVIDER-LIVE"]["tolerance"] == 50
-    assert groups["AUTO-PROVIDER-LIVE"]["empty-fallback"] == "REJECT"
-    assert groups["AUTO-PROVIDER-LIVE"]["lazy"] is True
-    assert groups["AUTO-PROVIDER-SEED"]["include-all-providers"] is True
-    assert groups["AUTO-PROVIDER-SEED"]["filter"] == "^SEED "
-    assert groups["AUTO-PROVIDER-SEED"]["tolerance"] == 50
-    assert groups["AUTO-PROVIDER-SEED"]["hidden"] is True
+    assert groups["PROVIDER-AUTO"]["empty-fallback"] == "REJECT"
+    assert groups["PROVIDER-AUTO-LIVE"]["use"] == ["provider"]
+    assert groups["PROVIDER-AUTO-LIVE"]["interval"] == 15
+    assert groups["PROVIDER-AUTO-LIVE"]["timeout"] == 3000
+    assert groups["PROVIDER-AUTO-LIVE"]["max-failed-times"] == 2
+    assert groups["PROVIDER-AUTO-LIVE"]["tolerance"] == 50
+    assert groups["PROVIDER-AUTO-LIVE"]["empty-fallback"] == "REJECT"
+    assert groups["PROVIDER-AUTO-LIVE"]["lazy"] is True
+    assert groups["PROVIDER-AUTO-SEED"]["use"] == ["provider-seed"]
+    assert groups["PROVIDER-AUTO-SEED"]["tolerance"] == 50
+    assert groups["PROVIDER-AUTO-SEED"]["empty-fallback"] == "REJECT"
+    assert groups["PROVIDER-AUTO-SEED"]["hidden"] is True
     assert groups["FETCH-PRIVATE"]["proxies"] == [
-        "BOOTSTRAP-SEED | fixture-seed",
+        "PROVIDER-AUTO-SEED",
         "DIRECT",
     ]
-    assert groups["FETCH-PRIVATE"]["default-selected"] == "BOOTSTRAP-SEED | fixture-seed"
-    assert groups["FETCH-PRIVATE"]["empty-fallback"] == "BOOTSTRAP-SEED | fixture-seed"
+    assert "default-selected" not in groups["FETCH-PRIVATE"]
+    assert "empty-fallback" not in groups["FETCH-PRIVATE"]
     assert groups["FETCH-AUTO-PROVIDER"]["proxies"] == [
         "PRIVATE",
-        "BOOTSTRAP-SEED | fixture-seed",
+        "PROVIDER-AUTO-SEED",
         "DIRECT",
     ]
-    assert groups["FETCH-AUTO-PROVIDER"]["default-selected"] == "BOOTSTRAP-SEED | fixture-seed"
-    assert groups["FETCH-AUTO-PROVIDER"]["empty-fallback"] == "BOOTSTRAP-SEED | fixture-seed"
+    assert "default-selected" not in groups["FETCH-AUTO-PROVIDER"]
+    assert "empty-fallback" not in groups["FETCH-AUTO-PROVIDER"]
     assert groups["FETCH-PRIVATE"]["hidden"] is True
     assert groups["FETCH-AUTO-PROVIDER"]["hidden"] is True
     assert groups["AUTO"]["type"] == "fallback"
     assert groups["AUTO"]["proxies"] == ["PRIVATE", "PROVIDER-AUTO"]
+    assert groups["AUTO"]["empty-fallback"] == "REJECT"
     assert groups["AUTO"]["timeout"] == 3000
     assert groups["AUTO"]["max-failed-times"] == 2
     assert groups["AUTO"]["lazy"] is True
@@ -112,23 +113,27 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
     ]
     assert groups["BASE"]["type"] == "select"
     assert groups["BASE"]["proxies"] == ["DIRECT", "PROXY"]
+    assert groups["GLOBAL"]["proxies"] == [
+        name for name in groups if name != "GLOBAL"
+    ]
+    assert "fixture-seed" not in groups["GLOBAL"]["proxies"]
 
     assert "exclude-filter" not in parsed["proxy-providers"]["private"]
     assert parsed["proxy-providers"]["provider"]["exclude-filter"] == (
         "(?i)(?:Киев|Москва)"
     )
     assert parsed["proxy-providers"]["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
-    assert parsed["proxy-providers"]["provider"]["override"]["additional-prefix"] == "LIVE | "
+    assert "override" not in parsed["proxy-providers"]["provider"]
     assert parsed["proxy-providers"]["private"]["proxy"] == "FETCH-PRIVATE"
     assert parsed["proxy-providers"]["provider"]["header"]["User-Agent"] == [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
     ]
     seed_node = parsed["proxy-providers"]["provider-seed"]["payload"][0]
+    assert seed_node["name"] == "fixture-seed"
     assert seed_node["type"] == "vless"
     assert seed_node["server"] == "seed.example.net"
-    assert parsed["proxies"][0]["name"] == "BOOTSTRAP-SEED | fixture-seed"
-    assert parsed["proxies"][0]["server"] == "seed.example.net"
+    assert "proxies" not in parsed
     assert seed_node["reality-opts"] == {
         "public-key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "short-id": "0123456789abcdef",
@@ -141,6 +146,19 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
     rules = parsed["rules"]
     assert rules[-1] == "MATCH,BASE"
     assert all(",DIRECT" in rule for rule in rules[:-1])
+
+
+def test_render_includes_protected_mihomo_hosts_mapping(
+    config_data, write_yaml, users_path, provider_state_dir
+):
+    mapping = {"feed.fixture.test": "192.0.2.71"}
+    config_data["mihomo"] = {"hosts": mapping}
+    config = load_config(
+        write_yaml("mihomo-host-map.yaml", config_data), state_dir=provider_state_dir
+    )
+    user = load_users(users_path).users["alice"]
+
+    assert build_mihomo_profile(config, user)["hosts"] == mapping
 
 
 def test_render_provider_download_proxy_is_configurable(
