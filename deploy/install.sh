@@ -67,7 +67,7 @@ if [[ "${1:-}" == "--release-dir" ]]; then
   staged_caddy="/etc/caddy/.Caddyfile.subctl.$$"
   install -o root -g root -m 0644 "$RELEASE_DIR/Caddyfile" "$staged_caddy"
   staged_files+=("$staged_caddy")
-  caddy validate --config "$staged_caddy"
+  caddy validate --adapter caddyfile --config "$staged_caddy"
 
   for unit in subctl-web.service subctl-refresh.service subctl-refresh.timer; do
     mv -f -- "/etc/systemd/system/.${unit}.subctl.$$" "/etc/systemd/system/$unit"

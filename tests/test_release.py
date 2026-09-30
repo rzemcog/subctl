@@ -8,6 +8,7 @@ import pytest
 
 
 RELEASE_SCRIPT = Path(__file__).resolve().parents[1] / "deploy" / "release.py"
+INSTALLER_SCRIPT = Path(__file__).resolve().parents[1] / "deploy" / "install.sh"
 _SPEC = importlib.util.spec_from_file_location("subctl_release", RELEASE_SCRIPT)
 release = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None
@@ -29,6 +30,12 @@ def make_staging_dir(tmp_path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
     return staging
+
+
+def test_release_installer_selects_caddyfile_adapter_for_staged_config():
+    installer = INSTALLER_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'caddy validate --adapter caddyfile --config "$staged_caddy"' in installer
 
 
 def test_bundle_binds_commit_to_immutable_artifact_and_hashes(tmp_path):
