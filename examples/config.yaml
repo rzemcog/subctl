@@ -15,7 +15,6 @@ mihomo:
 render:
   profile_update_interval_seconds: 3600
   provider_update_interval_seconds: 900
-  provider_download_proxy: DIRECT
   healthcheck_url: "https://www.gstatic.com/generate_204"
   healthcheck_interval_seconds: 15
   healthcheck_timeout_milliseconds: 3000

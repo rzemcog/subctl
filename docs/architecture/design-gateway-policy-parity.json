@@ -1,0 +1,187 @@
+{
+  "kind": "design",
+  "schema_version": "0.1",
+  "id": "design-gateway-policy-parity",
+  "derived_from": "intent-gateway-policy-parity",
+  "modules": [
+    {
+      "name": "Common proxy policy builder",
+      "responsibility": "Produce provider definitions, health-checks, proxy groups, ordered fallbacks, and common rules from one policy implementation.",
+      "interface": "Accept AppConfig policy settings, provider source URLs, source-specific request metadata, and the profile BASE default; load the validated SEED snapshot from the configured state cache and return the common policy plus snapshot metadata.",
+      "seam": "Generated user and gateway profile projections compared through their public renderer interfaces."
+    },
+    {
+      "name": "Profile source adapters",
+      "responsibility": "Supply each renderer's private and shared provider source while preserving source-specific metadata.",
+      "interface": "User profiles provide the published subctl provider URL; gateway profiles provide the configured upstream URL and retain gateway BASE=PROXY.",
+      "seam": "Provider URL, fetch route, and source-specific request headers in generated profiles."
+    },
+    {
+      "name": "Gateway runtime envelope",
+      "responsibility": "Add gateway-only runtime and bootstrap routing around the shared proxy policy.",
+      "interface": "Compose unchanged TUN, DNS, listener, controller, interface, protected-host, and direct bootstrap-rule sections with the shared policy.",
+      "seam": "Exact gateway profile tests and Mihomo config validation."
+    },
+    {
+      "name": "Legacy setting compatibility",
+      "responsibility": "Keep old provider-download settings loadable without allowing them to fork canonical routing.",
+      "interface": "Accept and validate the old field for persisted config compatibility; omit it from new UI edits and mark it deprecated in configuration docs.",
+      "seam": "Config parsing tests and UI bundle build."
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Common proxy policy generation",
+      "owner": "Common proxy policy builder",
+      "operations": [
+        "build provider definitions",
+        "build PRIVATE, PROVIDER-AUTO, AUTO, PROXY, BASE, GLOBAL, and recovery groups",
+        "build common rules ending in MATCH,BASE"
+      ],
+      "errors": [
+        "missing or invalid SEED snapshot",
+        "invalid common profile configuration"
+      ],
+      "idempotency": "The same configuration, state-cache snapshot, sources, and request metadata produce the same policy structure."
+    },
+    {
+      "name": "Profile source composition",
+      "owner": "Profile source adapters",
+      "operations": [
+        "compose the public feed-backed user profile",
+        "compose the direct-upstream gateway profile"
+      ],
+      "errors": [
+        "missing user source",
+        "missing gateway source configuration"
+      ],
+      "idempotency": "Repeated rendering preserves each profile type's provider source while delegating shared policy to one builder."
+    },
+    {
+      "name": "Gateway runtime composition",
+      "owner": "Gateway runtime envelope",
+      "operations": [
+        "add gateway runtime settings",
+        "prepend direct bootstrap rules"
+      ],
+      "errors": [
+        "invalid TUN route exclude",
+        "invalid gateway configuration"
+      ],
+      "idempotency": "The same gateway inputs preserve the same server-specific envelope and rule prefix."
+    },
+    {
+      "name": "Legacy settings compatibility",
+      "owner": "Legacy setting compatibility",
+      "operations": [
+        "load persisted provider_download_proxy values",
+        "exclude the deprecated field from new settings submissions"
+      ],
+      "errors": [
+        "invalid legacy provider_download_proxy value"
+      ],
+      "idempotency": "Old settings remain loadable and cannot change the canonical fetch groups."
+    }
+  ],
+  "state_machines": [
+    {
+      "name": "Provider selection and fetch recovery",
+      "states": [
+        "LIVE_SELECTED",
+        "SEED_SELECTED",
+        "PRIVATE_FETCH",
+        "DIRECT_FETCH",
+        "UNAVAILABLE"
+      ],
+      "transitions": [
+        {
+          "from": "LIVE_SELECTED",
+          "event": "LIVE becomes empty or unhealthy",
+          "to": "SEED_SELECTED",
+          "guard": "The inline SEED group has at least one usable node.",
+          "action": "Reject an empty LIVE group and continue to the canonical SEED fallback."
+        },
+        {
+          "from": "LIVE_SELECTED",
+          "event": "LIVE and SEED become unusable",
+          "to": "UNAVAILABLE",
+          "guard": "Neither provider-backed child group has a usable node.",
+          "action": "Do not claim a usable automatic route."
+        },
+        {
+          "from": "PRIVATE_FETCH",
+          "event": "PRIVATE is empty or unhealthy during provider fetch",
+          "to": "SEED_SELECTED",
+          "guard": "A usable SEED node exists.",
+          "action": "Advance to the next configured fetch fallback."
+        },
+        {
+          "from": "SEED_SELECTED",
+          "event": "SEED is unavailable during provider fetch",
+          "to": "DIRECT_FETCH",
+          "guard": "The provider request can use DIRECT.",
+          "action": "Attempt the final direct fetch fallback."
+        }
+      ]
+    }
+  ],
+  "failure_handling": [
+    {
+      "failure": "A renderer branch constructs provider policy independently.",
+      "response": "Policy parity tests fail; both renderers must use the shared builder."
+    },
+    {
+      "failure": "A legacy setting changes gateway provider routing.",
+      "response": "Compatibility tests fail; the value remains parseable but cannot override the shared FETCH groups."
+    },
+    {
+      "failure": "Generated YAML is rejected by Mihomo.",
+      "response": "Treat validation as failed and keep production render/redeploy out of scope until corrected."
+    }
+  ],
+  "traceability": [
+    {
+      "intent_ref": "I1",
+      "design_refs": [
+        "Common proxy policy builder",
+        "Common proxy policy generation"
+      ]
+    },
+    {
+      "intent_ref": "I2",
+      "design_refs": [
+        "Profile source adapters",
+        "Profile source composition"
+      ]
+    },
+    {
+      "intent_ref": "I3",
+      "design_refs": [
+        "Common proxy policy builder",
+        "Common proxy policy generation"
+      ]
+    },
+    {
+      "intent_ref": "I4",
+      "design_refs": [
+        "Gateway runtime envelope",
+        "Gateway runtime composition"
+      ]
+    },
+    {
+      "intent_ref": "I5",
+      "design_refs": [
+        "Legacy setting compatibility",
+        "Legacy settings compatibility"
+      ]
+    },
+    {
+      "intent_ref": "I6",
+      "design_refs": [
+        "Gateway runtime envelope",
+        "failure_handling"
+      ]
+    }
+  ],
+  "open_questions": []
+}

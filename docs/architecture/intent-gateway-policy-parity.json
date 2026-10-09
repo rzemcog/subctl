@@ -1,0 +1,82 @@
+{
+  "kind": "intent",
+  "schema_version": "0.1",
+  "id": "intent-gateway-policy-parity",
+  "title": "Keep gateway routing policy aligned with user profiles",
+  "problem": "The gateway profile uses a reduced legacy provider and group topology, so its fallback and provider-selection behavior can diverge from the canonical user profile.",
+  "outcome": "Gateway and user profiles use the same provider-group, health-check, fallback, and final-route policy while retaining their distinct provider sources and gateway runtime envelope.",
+  "actors": [
+    {
+      "name": "Profile user",
+      "responsibility": "Receive a predictable automatic proxy route with the same LIVE and SEED recovery behavior across profile types."
+    },
+    {
+      "name": "Service operator",
+      "responsibility": "Render the gateway from its direct upstream sources without changing server runtime settings or publishing user feeds."
+    }
+  ],
+  "in_scope": [
+    "Align provider names, health-check settings, proxy groups, fallback order, group membership, and MATCH behavior with the current user renderer.",
+    "Keep the gateway provider URL on the configured direct upstream and the user provider URL on the published subctl feed.",
+    "Keep gateway BASE defaulted to PROXY and user BASE defaulted to DIRECT as an explicit profile-specific selection default.",
+    "Retain acceptance of the legacy provider_download_proxy setting while retiring its effect on the gateway fetch route."
+  ],
+  "out_of_scope": [
+    "Changing production configuration, rendering production files, restarting services, or deploying a release.",
+    "Changing gateway TUN, DNS, listeners, controller, interface, protected hosts, or direct bootstrap rules.",
+    "Changing user or gateway provider source URLs or moving the gateway onto a published provider feed."
+  ],
+  "invariants": [
+    {
+      "id": "I1",
+      "claim": "Both renderers use the same canonical provider-backed group topology, provider health checks, LIVE-to-SEED fallback, and provider-fetch recovery order.",
+      "enforcement": "A structural projection of generated user and gateway profiles compares providers and policy groups, allowing only declared source and BASE-default differences."
+    },
+    {
+      "id": "I2",
+      "claim": "The user profile uses the published provider source and the gateway uses the direct configured upstream source; neither source is substituted for the other.",
+      "enforcement": "Renderer tests assert source URLs by profile type and ensure gateway output contains no public feed base URL or shared token."
+    },
+    {
+      "id": "I3",
+      "claim": "The gateway keeps BASE selected as PROXY by default, user profiles keep DIRECT, and MATCH targets BASE in both profiles.",
+      "enforcement": "Profile tests assert both selected defaults and the shared final MATCH route."
+    },
+    {
+      "id": "I4",
+      "claim": "Gateway-specific TUN, DNS, listeners, controller, interface, and direct bootstrap routing remain intact.",
+      "enforcement": "Gateway profile tests assert these exact sections and the direct bootstrap-rule prefix alongside the shared policy projection."
+    },
+    {
+      "id": "I5",
+      "claim": "Existing configuration containing provider_download_proxy continues to load, but the field no longer changes canonical gateway provider-fetch routing.",
+      "enforcement": "Config compatibility and gateway routing tests cover legacy file and settings-overlay values; the operator UI and documentation identify the setting as deprecated."
+    },
+    {
+      "id": "I6",
+      "claim": "No production render or redeploy occurs as part of this change.",
+      "enforcement": "Verification uses synthetic fixtures and local generated profiles only."
+    }
+  ],
+  "failure_model": [
+    {
+      "failure": "The validated provider cache cannot produce a usable SEED snapshot when gateway profiles are rendered.",
+      "response": "Fail rendering with the existing seed validation error and leave the current gateway output untouched."
+    },
+    {
+      "failure": "The gateway or user source is accidentally changed while policy is shared.",
+      "response": "Fail the structural/source assertions before any production release."
+    },
+    {
+      "failure": "A gateway-specific runtime section changes as a side effect of policy extraction.",
+      "response": "Fail the exact gateway-envelope assertions and restore the section from the pre-change behavior."
+    }
+  ],
+  "acceptance_signals": [
+    "User and gateway generated profiles have matching canonical provider and group policy, with only documented source and BASE-default differences.",
+    "The direct gateway provider source, gateway runtime sections, and bootstrap rule prefix remain correct.",
+    "The full project test suite passes and generated profiles pass the configured Mihomo validation/runtime checks.",
+    "The implementation reports a structural diff and does not alter production state."
+  ],
+  "open_questions": []
+}

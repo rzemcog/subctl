@@ -21,7 +21,6 @@ mihomo:
 render:
   profile_update_interval_seconds: 3600
   provider_update_interval_seconds: 900
-  provider_download_proxy: DIRECT
   healthcheck_url: "https://www.gstatic.com/generate_204"
   healthcheck_interval_seconds: 15
   healthcheck_timeout_milliseconds: 3000
@@ -46,11 +45,13 @@ gateway:
   dns_nameservers: ["1.1.1.1", "8.8.8.8"]
 ```
 
-`render.provider_download_proxy` defaults to `DIRECT` and applies to the server-side gateway profile only. Public user profiles use the internal `FETCH-AUTO-PROVIDER` and `FETCH-PRIVATE` recovery groups; they do not use this setting.
+`render.provider_download_proxy` is deprecated. It remains accepted when loading existing config and UI settings, but no longer changes generated fetch routes. Both profile types use the shared `FETCH-AUTO-PROVIDER` and `FETCH-PRIVATE` recovery groups. Keep existing values or remove them during config cleanup; new settings submissions omit this field.
 
 `mihomo.hosts` is an optional protected mapping from exact DNS hostnames to unscoped IP addresses. The renderer copies validated entries into generated Mihomo profiles without replacing the URL hostname, HTTP Host, or TLS SNI. UI settings cannot change this map.
 
-Public profiles include a SEED snapshot of the validated provider cache as an inline Mihomo provider. The LIVE HTTP provider keeps the existing `./providers/provider.yaml` cache path and update interval and sends a browser-like `User-Agent` header. The public `PROVIDER-AUTO` fallback prefers `PROVIDER-AUTO-LIVE`, then `PROVIDER-AUTO-SEED`. Both child groups use their respective providers directly, and the original node names remain visible without LIVE, SEED, or BOOTSTRAP prefixes. `FETCH-PRIVATE` tries SEED then DIRECT; `FETCH-AUTO-PROVIDER` tries PRIVATE, SEED, then DIRECT. Fetch recovery refers to the SEED group; it does not add duplicate seed proxies to the top-level `proxies` list.
+User and gateway profiles share the same policy topology: a LIVE HTTP provider and inline SEED snapshot; `PROVIDER-AUTO` prefers `PROVIDER-AUTO-LIVE`, then `PROVIDER-AUTO-SEED`; `AUTO` and `PROXY` have the same group composition; and provider downloads use `FETCH-PRIVATE` (SEED, DIRECT) and `FETCH-AUTO-PROVIDER` (PRIVATE, SEED, DIRECT). The gateway keeps its configured direct upstream provider URL; user profiles use the published `/feeds/provider/...` source. The public LIVE provider sends a browser-like `User-Agent` header; the gateway source does not. Both child groups use their respective providers directly, original node names remain visible without LIVE, SEED, or BOOTSTRAP prefixes, and fetch recovery does not add duplicate seed proxies to the top-level `proxies` list. The user `BASE` defaults to DIRECT and gateway `BASE` defaults to PROXY; both profiles finish with `MATCH,BASE`.
+
+When provider inclusion is enabled, both renderers need a validated `provider.decoded` snapshot in the configured state cache to embed `provider-seed`. Run `subctl refresh-provider` before a first gateway render if that cache has not been populated.
 
 The explicit `GLOBAL` group contains policy-group names only. It does not list physical provider nodes. Recovery groups are hidden from the Mihomo group picker.
 
