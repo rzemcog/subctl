@@ -41,6 +41,7 @@ class MihomoConfig:
 class RenderConfig:
     profile_update_interval_seconds: int
     provider_update_interval_seconds: int
+    # Deprecated compatibility input; renderers always use canonical fetch groups.
     provider_download_proxy: str
     healthcheck_url: str
     healthcheck_interval_seconds: int
@@ -405,6 +406,7 @@ _SETTINGS_RENDER_FIELDS = {
     "healthcheck_tolerance_milliseconds",
     "healthcheck_lazy",
     "provider_exclude_keywords",
+    # Accept persisted settings during migration, though renderers ignore this value.
     "provider_download_proxy",
 }
 _SETTINGS_COMPOSITION_FIELDS = {

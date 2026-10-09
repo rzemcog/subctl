@@ -187,7 +187,6 @@ function SettingsModal({ tab, settings, users, onClose, onChanged, notify }) {
   const source = settings?.draft || settings?.settings || defaultSettings();
   const [form, setForm] = useState(() => {
     const initial = clone(source);
-    initial.render.provider_download_proxy ??= "DIRECT";
     return initial;
   });
   const [preview, setPreview] = useState(null);
@@ -195,19 +194,25 @@ function SettingsModal({ tab, settings, users, onClose, onChanged, notify }) {
   const [working, setWorking] = useState(false);
   const providerTab = tab === "provider";
 
+  function settingsPayload() {
+    const payload = clone(form);
+    if (payload.render) delete payload.render.provider_download_proxy;
+    return payload;
+  }
+
   function update(path, value) {
     setForm((current) => { const next = clone(current); let target = next; path.slice(0, -1).forEach((key) => { target = target[key]; }); target[path[path.length - 1]] = value; return next; });
   }
 
   async function previewForm() {
     setWorking(true);
-    try { const data = await api("/api/settings/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings: form, user_name: previewUser || null }) }); setPreview(data); }
+    try { const data = await api("/api/settings/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings: settingsPayload(), user_name: previewUser || null }) }); setPreview(data); }
     catch (error) { notify(error.message, "error"); } finally { setWorking(false); }
   }
 
   async function saveDraft() {
     setWorking(true);
-    try { await api("/api/settings/draft", { method: "POST", headers: MUTATION_HEADERS, body: JSON.stringify({ settings: form }) }); notify("Черновик сохранён"); await onChanged(); }
+    try { await api("/api/settings/draft", { method: "POST", headers: MUTATION_HEADERS, body: JSON.stringify({ settings: settingsPayload() }) }); notify("Черновик сохранён"); await onChanged(); }
     catch (error) { notify(error.message, "error"); } finally { setWorking(false); }
   }
 
@@ -215,7 +220,7 @@ function SettingsModal({ tab, settings, users, onClose, onChanged, notify }) {
     setWorking(true);
     try {
       const path = providerTab ? "/api/provider/settings" : "/api/settings/publish";
-      const body = providerTab ? { upstream_url: form.provider.upstream_url, refresh_interval_seconds: form.provider.refresh_interval_seconds, exclude_keywords: form.render.provider_exclude_keywords } : { settings: form };
+      const body = providerTab ? { upstream_url: form.provider.upstream_url, refresh_interval_seconds: form.provider.refresh_interval_seconds, exclude_keywords: form.render.provider_exclude_keywords } : { settings: settingsPayload() };
       await api(path, { method: "POST", headers: MUTATION_HEADERS, body: JSON.stringify(body) });
       notify(providerTab ? "Provider сохранён, refresh и генерация поставлены в очередь" : "Настройки опубликованы, полная генерация поставлена в очередь"); await onChanged(); onClose();
     } catch (error) { notify(error.message, "error"); } finally { setWorking(false); }
@@ -234,7 +239,7 @@ function SettingsModal({ tab, settings, users, onClose, onChanged, notify }) {
     <div className="settings-tabs"><button className={providerTab ? "tab" : "tab active"} onClick={() => {}}>Шаблон</button><span className="tab-note">{providerTab ? "Один общий источник для всех профилей" : `Опубликовано: v${settings?.version || 0}`}</span></div>
     <div className="settings-grid">
       {providerTab && <section className="settings-section"><h3>Общий provider</h3><p className="form-hint">Сейчас используется один provider-блок. Он не размножается по пользователям: изменяется URL источника, а общий кэш затем используется всеми профилями.</p><label>Upstream URL<input value={form.provider.upstream_url} onChange={(e) => update(["provider", "upstream_url"], e.target.value)} /></label><label>Интервал обновления, сек.<input type="number" min="1" value={form.provider.refresh_interval_seconds} onChange={(e) => update(["provider", "refresh_interval_seconds"], Number(e.target.value))} /></label><label>Исключения по названию узла<input value={render.provider_exclude_keywords.join(", ")} onChange={(e) => update(["render", "provider_exclude_keywords"], e.target.value.split(",").map((v) => v.trim()).filter(Boolean))} placeholder="test, expired" /></label></section>}
-      {!providerTab && <><section className="settings-section"><h3>Периодичность</h3><label>Обновление личного профиля, сек.<input type="number" min="1" value={render.profile_update_interval_seconds} onChange={(e) => update(["render", "profile_update_interval_seconds"], Number(e.target.value))} /></label><label>Обновление provider в профиле, сек.<input type="number" min="1" value={render.provider_update_interval_seconds} onChange={(e) => update(["render", "provider_update_interval_seconds"], Number(e.target.value))} /></label><label>URL health-check<input value={render.healthcheck_url} onChange={(e) => update(["render", "healthcheck_url"], e.target.value)} /></label><label>Интервал health-check, сек.<input type="number" min="1" value={render.healthcheck_interval_seconds} onChange={(e) => update(["render", "healthcheck_interval_seconds"], Number(e.target.value))} /></label><label>Timeout health-check, мс.<input type="number" min="1" value={render.healthcheck_timeout_milliseconds} onChange={(e) => update(["render", "healthcheck_timeout_milliseconds"], Number(e.target.value))} /></label></section><section className="settings-section"><h3>Склейка</h3><label className="check-row"><input type="checkbox" checked={composition.include_private} onChange={(e) => update(["render", "composition", "include_private"], e.target.checked)} />Личная группа PRIVATE</label><label className="check-row"><input type="checkbox" checked={composition.include_provider} onChange={(e) => update(["render", "composition", "include_provider"], e.target.checked)} />Общий provider PROVIDER-AUTO</label><label>Маршрут загрузки provider для gateway<input value={render.provider_download_proxy} onChange={(e) => update(["render", "provider_download_proxy"], e.target.value)} placeholder="DIRECT" /></label><p className="form-hint">Этот маршрут применяется к серверному gateway. Пользовательский профиль использует цепочку FETCH-AUTO-PROVIDER → PRIVATE → SEED → DIRECT.</p><label className="check-row"><input type="checkbox" checked={composition.provider_first} onChange={(e) => update(["render", "composition", "provider_first"], e.target.checked)} />Provider-узлы первыми в raw</label><label>Префикс личных узлов<input value={composition.private_prefix} onChange={(e) => update(["render", "composition", "private_prefix"], e.target.value)} /></label><label>Префикс provider-узлов<input value={composition.provider_prefix} onChange={(e) => update(["render", "composition", "provider_prefix"], e.target.value)} /></label><label>Исключения provider<input value={render.provider_exclude_keywords.join(", ")} onChange={(e) => update(["render", "provider_exclude_keywords"], e.target.value.split(",").map((v) => v.trim()).filter(Boolean))} placeholder="test, expired" /></label></section></>}
+      {!providerTab && <><section className="settings-section"><h3>Периодичность</h3><label>Обновление личного профиля, сек.<input type="number" min="1" value={render.profile_update_interval_seconds} onChange={(e) => update(["render", "profile_update_interval_seconds"], Number(e.target.value))} /></label><label>Обновление provider в профиле, сек.<input type="number" min="1" value={render.provider_update_interval_seconds} onChange={(e) => update(["render", "provider_update_interval_seconds"], Number(e.target.value))} /></label><label>URL health-check<input value={render.healthcheck_url} onChange={(e) => update(["render", "healthcheck_url"], e.target.value)} /></label><label>Интервал health-check, сек.<input type="number" min="1" value={render.healthcheck_interval_seconds} onChange={(e) => update(["render", "healthcheck_interval_seconds"], Number(e.target.value))} /></label><label>Timeout health-check, мс.<input type="number" min="1" value={render.healthcheck_timeout_milliseconds} onChange={(e) => update(["render", "healthcheck_timeout_milliseconds"], Number(e.target.value))} /></label></section><section className="settings-section"><h3>Склейка</h3><label className="check-row"><input type="checkbox" checked={composition.include_private} onChange={(e) => update(["render", "composition", "include_private"], e.target.checked)} />Личная группа PRIVATE</label><label className="check-row"><input type="checkbox" checked={composition.include_provider} onChange={(e) => update(["render", "composition", "include_provider"], e.target.checked)} />Общий provider PROVIDER-AUTO</label><label className="check-row"><input type="checkbox" checked={composition.provider_first} onChange={(e) => update(["render", "composition", "provider_first"], e.target.checked)} />Provider-узлы первыми в raw</label><label>Префикс личных узлов<input value={composition.private_prefix} onChange={(e) => update(["render", "composition", "private_prefix"], e.target.value)} /></label><label>Префикс provider-узлов<input value={composition.provider_prefix} onChange={(e) => update(["render", "composition", "provider_prefix"], e.target.value)} /></label><label>Исключения provider<input value={render.provider_exclude_keywords.join(", ")} onChange={(e) => update(["render", "provider_exclude_keywords"], e.target.value.split(",").map((v) => v.trim()).filter(Boolean))} placeholder="test, expired" /></label></section></>}
     </div>
     <div className="preview-toolbar"><label>Пользователь для preview<select value={previewUser} onChange={(e) => setPreviewUser(e.target.value)}><option value="">первый доступный</option>{users.map((user) => <option key={user.name} value={user.name}>{user.name}</option>)}</select></label><div className="modal-actions"><button className="button ghost" disabled={working} onClick={previewForm}><span className="button-icon">◉</span>Preview</button><button className="button ghost" disabled={working} onClick={saveDraft}><span className="button-icon">▣</span>Сохранить черновик</button><button className="button primary" disabled={working} onClick={publish}><span className="button-icon">✓</span>{providerTab ? "Сохранить и обновить" : "Publish и render all"}</button></div></div>
     {preview && <div className="preview-grid"><div><h3>Итоговый YAML · секреты скрыты</h3><pre>{preview.yaml || "Нет пользователя для preview"}</pre></div><div><h3>Raw-структура</h3><pre>{JSON.stringify(preview.raw, null, 2)}</pre></div></div>}
@@ -243,7 +248,7 @@ function SettingsModal({ tab, settings, users, onClose, onChanged, notify }) {
 }
 
 function defaultSettings() {
-  return { provider: { upstream_url: "", refresh_interval_seconds: 900 }, render: { profile_update_interval_seconds: 3600, provider_update_interval_seconds: 900, provider_download_proxy: "DIRECT", healthcheck_url: "https://www.gstatic.com/generate_204", healthcheck_interval_seconds: 15, healthcheck_timeout_milliseconds: 3000, healthcheck_max_failed_times: 2, healthcheck_tolerance_milliseconds: 50, healthcheck_lazy: true, provider_exclude_keywords: [], composition: { include_private: true, include_provider: true, provider_first: false, private_prefix: "PRIVATE | ", provider_prefix: "PROVIDER | " } } };
+  return { provider: { upstream_url: "", refresh_interval_seconds: 900 }, render: { profile_update_interval_seconds: 3600, provider_update_interval_seconds: 900, healthcheck_url: "https://www.gstatic.com/generate_204", healthcheck_interval_seconds: 15, healthcheck_timeout_milliseconds: 3000, healthcheck_max_failed_times: 2, healthcheck_tolerance_milliseconds: 50, healthcheck_lazy: true, provider_exclude_keywords: [], composition: { include_private: true, include_provider: true, provider_first: false, private_prefix: "PRIVATE | ", provider_prefix: "PROVIDER | " } } };
 }
 
 createRoot(document.getElementById("root")).render(<App />);

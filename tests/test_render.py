@@ -164,7 +164,7 @@ def test_render_includes_protected_mihomo_hosts_mapping(
     assert build_mihomo_profile(config, user)["hosts"] == mapping
 
 
-def test_render_provider_download_proxy_is_configurable(
+def test_render_legacy_provider_download_proxy_does_not_override_fetch_routes(
     config_data, write_yaml, users_path, provider_state_dir
 ):
     config_data["render"]["provider_download_proxy"] = "PROXY"
@@ -177,7 +177,7 @@ def test_render_provider_download_proxy_is_configurable(
     assert parsed["proxy-providers"]["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
 
 
-def test_render_provider_download_proxy_can_be_overridden_by_settings(
+def test_render_settings_legacy_provider_download_proxy_is_ignored(
     config_path, users_path, provider_state_dir
 ):
     config = load_config(

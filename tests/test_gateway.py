@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from conftest import VALID_ALICE_TOKEN, VALID_PROVIDER_TOKEN, assert_secret_not_printed
+from conftest import (
+    SEED_URI,
+    VALID_ALICE_TOKEN,
+    VALID_PROVIDER_TOKEN,
+    assert_secret_not_printed,
+)
 from subctl.config import load_config
 from subctl.errors import RenderError, ValidationError
 from subctl.registry import load_users
@@ -44,7 +49,18 @@ def gateway_config_path(write_yaml, gateway_config_data):
     return write_yaml("gateway-config.yaml", gateway_config_data)
 
 
-def test_gateway_profile_uses_direct_upstreams_and_shared_routing(
+@pytest.fixture(autouse=True)
+def gateway_default_seed_cache(tmp_path, monkeypatch):
+    from subctl import config as config_module
+
+    state_dir = tmp_path / "gateway-state"
+    cache = state_dir / "cache" / "provider.decoded"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(SEED_URI + "\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "DEFAULT_STATE_DIR", state_dir)
+
+
+def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
     gateway_config_path, users_path, provider_state_dir
 ):
     config = load_config(gateway_config_path, state_dir=provider_state_dir)
@@ -58,24 +74,36 @@ def test_gateway_profile_uses_direct_upstreams_and_shared_routing(
     assert config.public.base_url not in yaml.safe_dump(profile)
     assert VALID_PROVIDER_TOKEN not in yaml.safe_dump(profile)
     assert VALID_ALICE_TOKEN not in yaml.safe_dump(profile)
+
+    gateway_providers = profile["proxy-providers"]
+    public_providers = public_profile["proxy-providers"]
+    assert profile.get("proxies", []) == public_profile.get("proxies", [])
+    assert list(gateway_providers) == list(public_providers)
+    for name in gateway_providers:
+        gateway_provider = dict(gateway_providers[name])
+        public_provider = dict(public_providers[name])
+        gateway_provider.pop("url", None)
+        public_provider.pop("url", None)
+        gateway_provider.pop("header", None)
+        public_provider.pop("header", None)
+        assert gateway_provider == public_provider
+    assert gateway_providers["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
+    assert gateway_providers["private"]["proxy"] == "FETCH-PRIVATE"
+    assert "header" not in gateway_providers["provider"]
+
     gateway_groups = {group["name"]: group for group in profile["proxy-groups"]}
     public_groups = {group["name"]: group for group in public_profile["proxy-groups"]}
-    assert list(gateway_groups) == [
-        "PRIVATE",
-        "PROVIDER-AUTO",
-        "AUTO",
-        "PROXY",
-        "BASE",
-        "GLOBAL",
-    ]
-    assert gateway_groups["PROXY"] == public_groups["PROXY"]
+    assert list(gateway_groups) == list(public_groups)
+    for name in gateway_groups:
+        gateway_group = dict(gateway_groups[name])
+        public_group = dict(public_groups[name])
+        if name == "BASE":
+            gateway_group["proxies"] = sorted(gateway_group["proxies"])
+            public_group["proxies"] = sorted(public_group["proxies"])
+        assert gateway_group == public_group
+
     assert gateway_groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
-    assert gateway_groups["AUTO"] == public_groups["AUTO"]
-    assert gateway_groups["PROVIDER-AUTO"]["type"] == "url-test"
-    assert "PROVIDER-AUTO-LIVE" not in gateway_groups
-    assert "FETCH-AUTO-PROVIDER" not in gateway_groups
-    assert profile["proxy-providers"]["provider"]["proxy"] == "DIRECT"
-    assert "header" not in profile["proxy-providers"]["provider"]
+    assert public_groups["BASE"]["proxies"] == ["DIRECT", "PROXY"]
     assert gateway_groups["GLOBAL"]["proxies"] == [
         name for name in gateway_groups if name != "GLOBAL"
     ]
@@ -93,19 +121,35 @@ def test_gateway_profile_uses_direct_upstreams_and_shared_routing(
             "lazy": True,
         }
 
-    groups = {group["name"]: group for group in profile["proxy-groups"]}
-    assert list(groups) == [
-        "PRIVATE",
-        "PROVIDER-AUTO",
-        "AUTO",
-        "PROXY",
-        "BASE",
-        "GLOBAL",
-    ]
+    groups = gateway_groups
     assert groups["PROVIDER-AUTO"]["max-failed-times"] == 2
-    assert groups["PROVIDER-AUTO"]["tolerance"] == 50
+    assert groups["PROVIDER-AUTO-LIVE"]["tolerance"] == 50
+    assert groups["PROVIDER-AUTO-SEED"]["tolerance"] == 50
     assert groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
     assert profile["rules"][-1] == "MATCH,BASE"
+
+
+def test_gateway_uses_canonical_fetch_routes_with_legacy_download_override(
+    gateway_config_path, provider_state_dir
+):
+    config = load_config(
+        gateway_config_path,
+        state_dir=provider_state_dir,
+        settings_override={"render": {"provider_download_proxy": "PROXY"}},
+    )
+    profile = build_gateway_profile(config)
+
+    providers = profile["proxy-providers"]
+    assert config.render.provider_download_proxy == "PROXY"
+    assert providers["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
+    assert providers["private"]["proxy"] == "FETCH-PRIVATE"
+
+
+def test_gateway_profile_requires_provider_seed_cache(gateway_config_path, tmp_path):
+    config = load_config(gateway_config_path, state_dir=tmp_path / "missing-state")
+
+    with pytest.raises(ValidationError, match="provider cache is missing"):
+        build_gateway_profile(config)
 
 
 def test_gateway_profile_includes_protected_runtime_hosts_mapping(
@@ -330,6 +374,10 @@ def test_invalid_config_preserves_previous_gateway(
 
 def test_cli_render_gateway_redacts_secrets(gateway_config_path, tmp_path):
     output = tmp_path / "overridden" / "gateway.yaml"
+    state_dir = tmp_path / "cli-state"
+    cache = state_dir / "cache" / "provider.decoded"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(SEED_URI + "\n", encoding="utf-8")
     result = subprocess.run(
         [
             sys.executable,
@@ -337,6 +385,8 @@ def test_cli_render_gateway_redacts_secrets(gateway_config_path, tmp_path):
             "subctl.cli",
             "--config",
             str(gateway_config_path),
+            "--state-dir",
+            str(state_dir),
             "render-gateway",
             "--output",
             str(output),
