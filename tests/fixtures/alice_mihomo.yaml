@@ -1,3 +1,11 @@
+geodata-mode: false
+geo-auto-update: true
+geo-update-interval: 24
+geox-url:
+  geoip: https://geo.example.invalid/geoip-lite.dat
+  geosite: https://geo.example.invalid/geosite.dat
+  mmdb: https://geo.example.invalid/geoip.metadb
+  asn: https://geo.example.invalid/asn.mmdb
 proxy-providers:
   private:
     type: http
@@ -17,7 +25,6 @@ proxy-providers:
     proxy: FETCH-AUTO-PROVIDER
     interval: 900
     path: ./providers/provider.yaml
-    exclude-filter: (?i)(?:Excluded|SampleRegion)
     health-check:
       enable: true
       url: https://www.gstatic.com/generate_204
@@ -86,11 +93,14 @@ proxy-groups:
   - PRIVATE
   - PROVIDER-AUTO
   - DIRECT
+  - DIRECT-PROXY
+  - EXCLUDED-NODES
 - name: BASE
   type: select
   proxies:
-  - DIRECT
   - PROXY
+  - DIRECT
+  - DIRECT-PROXY
 - name: PROVIDER-AUTO-LIVE
   type: url-test
   use:
@@ -102,6 +112,7 @@ proxy-groups:
   max-failed-times: 2
   tolerance: 50
   lazy: true
+  exclude-filter: (?i)(?:Excluded|SampleRegion|Preferred|Sample)
 - name: PROVIDER-AUTO-SEED
   type: url-test
   use:
@@ -113,6 +124,25 @@ proxy-groups:
   max-failed-times: 2
   tolerance: 50
   lazy: true
+  exclude-filter: (?i)(?:Preferred|Sample)
+- name: DIRECT-PROXY
+  type: select
+  use:
+  - provider
+  filter: (?i)(?:Preferred|Sample)
+  empty-fallback: REJECT
+- name: EXCLUDED-NODES
+  type: select
+  use:
+  - provider
+  filter: (?i)(?:Excluded|SampleRegion)
+  exclude-filter: (?i)(?:Preferred|Sample)
+  empty-fallback: REJECT
+- name: DIRECT-NODES
+  type: select
+  proxies:
+  - DIRECT
+  - DIRECT-PROXY
 - name: FETCH-PRIVATE
   type: fallback
   proxies:
@@ -146,6 +176,9 @@ proxy-groups:
   - BASE
   - PROVIDER-AUTO-LIVE
   - PROVIDER-AUTO-SEED
+  - DIRECT-PROXY
+  - EXCLUDED-NODES
+  - DIRECT-NODES
   - FETCH-PRIVATE
   - FETCH-AUTO-PROVIDER
 rules:
@@ -158,4 +191,20 @@ rules:
 - IP-CIDR,::1/128,DIRECT,no-resolve
 - IP-CIDR,fc00::/7,DIRECT,no-resolve
 - IP-CIDR,fe80::/10,DIRECT,no-resolve
+- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
+- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
+- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
+- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
+- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
+- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
+- GEOIP,ZZ,DIRECT-NODES
 - MATCH,BASE
+tun:
+  enable: true
+  stack: mips
+  auto-route: true
+  mtu: 1350
+  route-exclude-address:
+  - 203.0.113.10/32
+hosts:
+  public.example.invalid: 203.0.113.10

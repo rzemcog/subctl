@@ -1,3 +1,4 @@
+import re
 import stat
 
 import yaml
@@ -6,6 +7,17 @@ from conftest import SEED_URI, VALID_ALICE_TOKEN, VALID_BOB_TOKEN, VALID_PROVIDE
 from subctl.config import load_config
 from subctl.registry import load_users
 from subctl.render import build_mihomo_profile, render_user_yaml, render_users
+
+
+RU_DIRECT_RULES = [
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "GEOIP,ZZ,DIRECT-NODES",
+]
 
 
 def test_render_user_yaml_matches_golden_snapshot(profile_config, users_path):
@@ -86,6 +98,17 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
     assert groups["PROVIDER-AUTO-SEED"].get("hidden", False) is False
     assert groups["PROVIDER-AUTO-SEED"]["tolerance"] == 50
     assert groups["PROVIDER-AUTO-SEED"]["empty-fallback"] == "REJECT"
+    assert groups["PROVIDER-AUTO-SEED"]["exclude-filter"] == (
+        "(?i)(?:Preferred|Sample)"
+    )
+    assert groups["DIRECT-PROXY"]["use"] == ["provider"]
+    assert groups["DIRECT-PROXY"]["filter"] == "(?i)(?:Preferred|Sample)"
+    assert groups["EXCLUDED-NODES"]["use"] == ["provider"]
+    assert groups["EXCLUDED-NODES"]["filter"] == "(?i)(?:Excluded|SampleRegion)"
+    assert groups["EXCLUDED-NODES"]["exclude-filter"] == (
+        "(?i)(?:Preferred|Sample)"
+    )
+    assert groups["DIRECT-NODES"]["proxies"] == ["DIRECT", "DIRECT-PROXY"]
     assert groups["FETCH-PRIVATE"]["proxies"] == [
         "PROVIDER-AUTO-SEED",
         "DIRECT",
@@ -113,18 +136,21 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
         "PRIVATE",
         "PROVIDER-AUTO",
         "DIRECT",
+        "DIRECT-PROXY",
+        "EXCLUDED-NODES",
     ]
     assert groups["BASE"]["type"] == "select"
-    assert groups["BASE"]["proxies"] == ["DIRECT", "PROXY"]
+    assert groups["BASE"]["proxies"] == ["PROXY", "DIRECT", "DIRECT-PROXY"]
     assert groups["GLOBAL"]["proxies"] == [
         name for name in groups if name != "GLOBAL"
     ]
     assert "fixture-seed" not in groups["GLOBAL"]["proxies"]
+    assert {"DIRECT-PROXY", "EXCLUDED-NODES", "DIRECT-NODES"}.issubset(
+        groups["GLOBAL"]["proxies"]
+    )
 
     assert "exclude-filter" not in parsed["proxy-providers"]["private"]
-    assert parsed["proxy-providers"]["provider"]["exclude-filter"] == (
-        "(?i)(?:Excluded|SampleRegion)"
-    )
+    assert "exclude-filter" not in parsed["proxy-providers"]["provider"]
     assert parsed["proxy-providers"]["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
     assert "override" not in parsed["proxy-providers"]["provider"]
     assert parsed["proxy-providers"]["private"]["proxy"] == "FETCH-PRIVATE"
@@ -148,7 +174,111 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
 
     rules = parsed["rules"]
     assert rules[-1] == "MATCH,BASE"
-    assert all(",DIRECT" in rule for rule in rules[:-1])
+    assert rules[9:16] == RU_DIRECT_RULES
+    assert all(rule.endswith(",DIRECT,no-resolve") for rule in rules[:9])
+
+    group_names = {group["name"] for group in parsed["proxy-groups"]}
+    assert len(group_names) == len(parsed["proxy-groups"])
+    dependencies = {
+        group["name"]: [
+            proxy for proxy in group.get("proxies", []) if proxy in group_names
+        ]
+        for group in parsed["proxy-groups"]
+    }
+    visiting = set()
+    visited = set()
+
+    def visit(name):
+        assert name not in visiting, f"proxy group cycle includes {name}"
+        if name in visited:
+            return
+        visiting.add(name)
+        for dependency in dependencies[name]:
+            visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in dependencies:
+        visit(name)
+
+
+def test_render_ru_and_excluded_live_nodes_are_partitioned(profile_config, users_path):
+    user = load_users(users_path).users["alice"]
+    parsed = build_mihomo_profile(profile_config, user)
+    groups = {group["name"]: group for group in parsed["proxy-groups"]}
+    ru_filter = re.compile(groups["DIRECT-PROXY"]["filter"])
+    other_excluded_filter = re.compile(groups["EXCLUDED-NODES"]["filter"])
+    auto_exclude_filter = re.compile(groups["PROVIDER-AUTO-LIVE"]["exclude-filter"])
+    excluded_ru_filter = re.compile(groups["EXCLUDED-NODES"]["exclude-filter"])
+    names = ["Preferred Premium", "РОССИЯ-01", "Excluded Preferred 2", "МОСКВА-3", "Ordinary"]
+
+    direct_proxy = [name for name in names if ru_filter.search(name)]
+    excluded = [
+        name
+        for name in names
+        if other_excluded_filter.search(name) and not excluded_ru_filter.search(name)
+    ]
+    auto_live = [name for name in names if not auto_exclude_filter.search(name)]
+
+    assert direct_proxy == ["Preferred Premium", "РОССИЯ-01", "Excluded Preferred 2"]
+    assert excluded == ["МОСКВА-3"]
+    assert auto_live == ["Ordinary"]
+
+
+def test_provider_seed_auto_group_excludes_ru_nodes(profile_config, users_path):
+    user = load_users(users_path).users["alice"]
+    cache = profile_config.state_dir / "cache" / "provider.decoded"
+    cache.write_text(
+        "\n".join(
+            [
+                "trojan://pass@ru.example:443#Preferred%20node",
+                "trojan://pass@ru2.example:443#Sample%20node",
+                "trojan://pass@overlap.example:443#Excluded%20Preferred",
+                "trojan://pass@excluded.example:443#SampleRegion%20node",
+                "trojan://pass@live.example:443#Ordinary",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    profile = build_mihomo_profile(profile_config, user)
+    groups = {group["name"]: group for group in profile["proxy-groups"]}
+    seed_names = [
+        proxy["name"]
+        for proxy in profile["proxy-providers"]["provider-seed"]["payload"]
+    ]
+    seed_auto_names = [
+        name
+        for name in seed_names
+        if not re.search(groups["PROVIDER-AUTO-SEED"]["exclude-filter"], name)
+    ]
+
+    assert seed_names == ["Preferred node", "Sample node", "Ordinary"]
+    assert seed_auto_names == ["Ordinary"]
+
+
+def test_render_user_defaults_tun_hosts_and_geodata(profile_config, users_path):
+    user = load_users(users_path).users["alice"]
+    profile = build_mihomo_profile(profile_config, user)
+
+    assert profile["tun"] == {
+        "enable": True,
+        "stack": "mips",
+        "auto-route": True,
+        "mtu": 1350,
+        "route-exclude-address": ["203.0.113.10/32"],
+    }
+    assert profile["hosts"] == {"public.example.invalid": "203.0.113.10"}
+    assert profile["geodata-mode"] is False
+    assert profile["geo-auto-update"] is True
+    assert profile["geo-update-interval"] == 24
+    assert profile["geox-url"] == {
+        "geoip": "https://geo.example.invalid/geoip-lite.dat",
+        "geosite": "https://geo.example.invalid/geosite.dat",
+        "mmdb": "https://geo.example.invalid/geoip.metadb",
+        "asn": "https://geo.example.invalid/asn.mmdb",
+    }
 
 
 def test_render_includes_protected_mihomo_hosts_mapping(
@@ -161,7 +291,10 @@ def test_render_includes_protected_mihomo_hosts_mapping(
     )
     user = load_users(users_path).users["alice"]
 
-    assert build_mihomo_profile(config, user)["hosts"] == mapping
+    assert build_mihomo_profile(config, user)["hosts"] == {
+        "public.example.invalid": "203.0.113.10",
+        **mapping,
+    }
 
 
 def test_render_legacy_provider_download_proxy_does_not_override_fetch_routes(

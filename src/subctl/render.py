@@ -39,6 +39,23 @@ TUN_ROUTE_EXCLUDE_ADDRESSES = (
     "fc00::/7",
     "fe80::/10",
 )
+RU_NODE_NAME_KEYWORDS = ("Preferred", "Sample")
+USER_DEFAULT_HOSTS = {"public.example.invalid": "203.0.113.10"}
+GEOX_URLS = {
+    "geoip": "https://geo.example.invalid/geoip-lite.dat",
+    "geosite": "https://geo.example.invalid/geosite.dat",
+    "mmdb": "https://geo.example.invalid/geoip.metadb",
+    "asn": "https://geo.example.invalid/asn.mmdb",
+}
+RU_DIRECT_RULES = (
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    "GEOIP,ZZ,DIRECT-NODES",
+)
 
 RenderMode = str
 FetchSubscription = Callable[[str, float], bytes]
@@ -109,11 +126,11 @@ def _build_user_profile(
     config: AppConfig, user: User
 ) -> tuple[dict, ProviderSeedSnapshot | None]:
     provider_url = f"{config.public.base_url}/feeds/provider/{config.provider.shared_token}"
-    return _build_common_proxy_policy(
+    profile, seed_snapshot = _build_common_proxy_policy(
         config,
         private_url=user.xui_subscription,
         provider_url=provider_url,
-        base_default="DIRECT",
+        base_default="PROXY",
         provider_header={
             "User-Agent": [
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -122,6 +139,15 @@ def _build_user_profile(
             ]
         },
     )
+    profile["tun"] = {
+        "enable": True,
+        "stack": "mips",
+        "auto-route": True,
+        "mtu": 1350,
+        "route-exclude-address": ["203.0.113.10/32"],
+    }
+    profile["hosts"] = {**USER_DEFAULT_HOSTS, **dict(config.mihomo.hosts)}
+    return profile, seed_snapshot
 
 
 def build_gateway_profile(
@@ -294,7 +320,17 @@ def _build_common_proxy_policy(
         "timeout": config.render.healthcheck_timeout_milliseconds,
         "lazy": config.render.healthcheck_lazy,
     }
-    exclude_filter = _provider_exclude_filter(config.render.provider_exclude_keywords)
+    live_exclude_filter = _provider_exclude_filter(
+        _unique_keywords(
+            (*config.render.provider_exclude_keywords, *RU_NODE_NAME_KEYWORDS)
+        )
+    )
+    ru_node_filter = _provider_exclude_filter(RU_NODE_NAME_KEYWORDS)
+    manually_excluded_keywords = tuple(
+        keyword
+        for keyword in config.render.provider_exclude_keywords
+        if keyword.casefold() not in {value.casefold() for value in RU_NODE_NAME_KEYWORDS}
+    )
     providers: dict[str, dict] = {}
     groups: list[dict] = []
     available_groups: list[str] = []
@@ -325,7 +361,6 @@ def _build_common_proxy_policy(
             "proxy": "FETCH-AUTO-PROVIDER",
             "interval": config.render.provider_update_interval_seconds,
             "path": "./providers/provider.yaml",
-            **({"exclude-filter": exclude_filter} if exclude_filter else {}),
             "health-check": dict(health_check),
             **({"header": provider_header} if provider_header else {}),
         }
@@ -361,6 +396,7 @@ def _build_common_proxy_policy(
                 "max-failed-times": config.render.healthcheck_max_failed_times,
                 "tolerance": config.render.healthcheck_tolerance_milliseconds,
                 "lazy": config.render.healthcheck_lazy,
+                **({"exclude-filter": live_exclude_filter} if live_exclude_filter else {}),
             },
             {
                 "name": "PROVIDER-AUTO-SEED",
@@ -373,11 +409,34 @@ def _build_common_proxy_policy(
                 "max-failed-times": config.render.healthcheck_max_failed_times,
                 "tolerance": config.render.healthcheck_tolerance_milliseconds,
                 "lazy": config.render.healthcheck_lazy,
+                "exclude-filter": ru_node_filter,
+            },
+            {
+                "name": "DIRECT-PROXY",
+                "type": "select",
+                "use": ["provider"],
+                "filter": ru_node_filter,
+                "empty-fallback": "REJECT",
+            },
+            {
+                "name": "EXCLUDED-NODES",
+                "type": "select",
+                "use": ["provider"],
+                "filter": _provider_name_filter(manually_excluded_keywords),
+                "exclude-filter": ru_node_filter,
+                "empty-fallback": "REJECT",
+            },
+            {
+                "name": "DIRECT-NODES",
+                "type": "select",
+                "proxies": ["DIRECT", "DIRECT-PROXY"],
             },
         ]
         available_groups.append("PROVIDER-AUTO")
     else:
-        internal_groups = []
+        internal_groups = [
+            {"name": "DIRECT-NODES", "type": "select", "proxies": ["DIRECT"]}
+        ]
 
     if config.render.provider_first:
         available_groups.sort(key=lambda value: 0 if value == "PROVIDER-AUTO" else 1)
@@ -409,15 +468,20 @@ def _build_common_proxy_policy(
         proxy_choices = ["AUTO", *available_groups, "DIRECT"]
     else:
         proxy_choices = ["DIRECT"]
+    if config.render.include_provider:
+        proxy_choices.extend(["DIRECT-PROXY", "EXCLUDED-NODES"])
+
+    base_choices = [
+        base_default,
+        "PROXY" if base_default == "DIRECT" else "DIRECT",
+    ]
+    if config.render.include_provider:
+        base_choices.append("DIRECT-PROXY")
 
     groups.extend(
         [
             {"name": "PROXY", "type": "select", "proxies": proxy_choices},
-            {
-                "name": "BASE",
-                "type": "select",
-                "proxies": [base_default, "PROXY" if base_default == "DIRECT" else "DIRECT"],
-            },
+            {"name": "BASE", "type": "select", "proxies": base_choices},
         ]
     )
     if config.render.include_provider:
@@ -466,6 +530,10 @@ def _build_common_proxy_policy(
     return (
         {
             **({"hosts": hosts} if hosts else {}),
+            "geodata-mode": False,
+            "geo-auto-update": True,
+            "geo-update-interval": 24,
+            "geox-url": dict(GEOX_URLS),
             "proxy-providers": providers,
             "proxy-groups": groups,
             "rules": [
@@ -478,6 +546,7 @@ def _build_common_proxy_policy(
                 "IP-CIDR,::1/128,DIRECT,no-resolve",
                 "IP-CIDR,fc00::/7,DIRECT,no-resolve",
                 "IP-CIDR,fe80::/10,DIRECT,no-resolve",
+                *RU_DIRECT_RULES,
                 "MATCH,BASE",
             ],
         },
@@ -675,6 +744,22 @@ def _provider_exclude_filter(keywords: tuple[str, ...]) -> str | None:
         return None
     alternatives = "|".join(re.escape(keyword) for keyword in keywords)
     return f"(?i)(?:{alternatives})"
+
+
+def _provider_name_filter(keywords: tuple[str, ...]) -> str:
+    """Match excluded-name candidates, with a valid regex for an empty set."""
+    return _provider_exclude_filter(keywords) or "a^"
+
+
+def _unique_keywords(keywords: tuple[str, ...]) -> tuple[str, ...]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for keyword in keywords:
+        normalized = keyword.casefold()
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(keyword)
+    return tuple(unique)
 
 
 def _uri_name_contains(uri: str, keywords: tuple[str, ...]) -> bool:

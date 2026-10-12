@@ -1,10 +1,20 @@
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 import yaml
+
+
+# Importing ``subctl.web`` creates the module-level app and its jobs database.
+# Keep that import-time side effect inside a writable, test-scoped directory.
+if "SUBCTL_WEB_JOBS_DB" not in os.environ:
+    _test_runtime_dir = tempfile.TemporaryDirectory(prefix="subctl-pytest-")
+    os.environ["SUBCTL_WEB_JOBS_DB"] = str(
+        Path(_test_runtime_dir.name) / "jobs.sqlite3"
+    )
 
 
 VALID_PROVIDER_TOKEN = "provider_shared_token_1234567890abcd"

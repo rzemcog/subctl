@@ -79,6 +79,9 @@ def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
     gateway_providers = profile["proxy-providers"]
     public_providers = public_profile["proxy-providers"]
     assert profile.get("proxies", []) == public_profile.get("proxies", [])
+    assert profile["geox-url"] == public_profile["geox-url"]
+    assert profile["geodata-mode"] is False
+    assert profile["geo-auto-update"] is True
     assert list(gateway_providers) == list(public_providers)
     for name in gateway_providers:
         gateway_provider = dict(gateway_providers[name])
@@ -103,8 +106,16 @@ def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
             public_group["proxies"] = sorted(public_group["proxies"])
         assert gateway_group == public_group
 
-    assert gateway_groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
-    assert public_groups["BASE"]["proxies"] == ["DIRECT", "PROXY"]
+    assert gateway_groups["BASE"]["proxies"] == [
+        "PROXY",
+        "DIRECT",
+        "DIRECT-PROXY",
+    ]
+    assert public_groups["BASE"]["proxies"] == [
+        "PROXY",
+        "DIRECT",
+        "DIRECT-PROXY",
+    ]
     assert gateway_groups["GLOBAL"]["proxies"] == [
         name for name in gateway_groups if name != "GLOBAL"
     ]
@@ -126,7 +137,7 @@ def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
     assert groups["PROVIDER-AUTO"]["max-failed-times"] == 2
     assert groups["PROVIDER-AUTO-LIVE"]["tolerance"] == 50
     assert groups["PROVIDER-AUTO-SEED"]["tolerance"] == 50
-    assert groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
+    assert groups["BASE"]["proxies"] == ["PROXY", "DIRECT", "DIRECT-PROXY"]
     assert profile["rules"][-1] == "MATCH,BASE"
 
 
