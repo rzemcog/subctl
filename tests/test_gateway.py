@@ -20,6 +20,7 @@ from subctl.config import load_config
 from subctl.errors import RenderError, ValidationError
 from subctl.registry import load_users
 from subctl.render import build_gateway_profile, render_gateway, render_user_yaml
+from subctl.routing import DEFAULT_RU_DIRECT_RULES
 
 
 PRIVATE_URL = "https://panel.example.com/sub/gateway-private-secret"
@@ -121,6 +122,9 @@ def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
         name for name in gateway_groups if name != "GLOBAL"
     ]
     assert profile["rules"][2:] == public_profile["rules"]
+    assert profile["rules"][2 : 2 + len(DEFAULT_RU_DIRECT_RULES)] == list(
+        DEFAULT_RU_DIRECT_RULES
+    )
 
     providers = profile["proxy-providers"]
     assert providers["private"]["interval"] == 3600

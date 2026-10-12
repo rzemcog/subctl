@@ -23,11 +23,18 @@ from .errors import RenderError, UpstreamError, ValidationError
 from .provider import validate_provider_subscription
 from .public_files import PUBLIC_FILE_MODE, ensure_public_directory
 from .registry import User, UserRegistry
+from .routing import merge_direct_rules
 from .seed import ProviderSeedSnapshot, load_provider_seed
 
 DEFAULT_PERSONAL_FETCH_TIMEOUT_SECONDS = 20
 PRIVATE_PREFIX = "PRIVATE | "
 PROVIDER_PREFIX = "PROVIDER | "
+DEFAULT_GEOX_URLS = {
+    "geoip": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/geoip.dat",
+    "geosite": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/geosite.dat",
+    "mmdb": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/geoip.metadb",
+    "asn": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/GeoLite2-ASN.mmdb",
+}
 TUN_ROUTE_EXCLUDE_ADDRESSES = (
     "127.0.0.0/8",
     "10.0.0.0/8",
@@ -534,7 +541,7 @@ def _build_common_proxy_policy(
             "geodata-mode": False,
             "geo-auto-update": True,
             "geo-update-interval": 24,
-            **({"geox-url": dict(config.mihomo.geox_urls)} if config.mihomo.geox_urls else {}),
+            "geox-url": {**DEFAULT_GEOX_URLS, **config.mihomo.geox_urls},
             "proxy-providers": providers,
             "proxy-groups": groups,
             "rules": [
@@ -547,7 +554,7 @@ def _build_common_proxy_policy(
                 "IP-CIDR,::1/128,DIRECT,no-resolve",
                 "IP-CIDR,fc00::/7,DIRECT,no-resolve",
                 "IP-CIDR,fe80::/10,DIRECT,no-resolve",
-                *config.mihomo.routing.direct_rules,
+                *merge_direct_rules(config.mihomo.routing.direct_rules),
                 "MATCH,BASE",
             ],
         },

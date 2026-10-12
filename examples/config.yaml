@@ -11,9 +11,11 @@ public:
 
 mihomo:
   hosts: {}
+  # Empty means the built-in merged RU geodata URLs are used.
   geox_urls: {}
   routing:
     direct_node_name_keywords: []
+    # Built-in RU direct rules are always included and deduplicated with these.
     direct_rules: []
 
 render:

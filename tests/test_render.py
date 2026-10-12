@@ -7,6 +7,7 @@ from conftest import SEED_URI, VALID_ALICE_TOKEN, VALID_BOB_TOKEN, VALID_PROVIDE
 from subctl.config import load_config
 from subctl.registry import load_users
 from subctl.render import build_mihomo_profile, render_user_yaml, render_users
+from subctl.routing import DEFAULT_RU_DIRECT_RULES
 
 
 CONFIGURED_DIRECT_RULES = [
@@ -164,7 +165,9 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
 
     rules = parsed["rules"]
     assert rules[-1] == "MATCH,BASE"
-    assert rules[9:10] == CONFIGURED_DIRECT_RULES
+    assert rules[9 : 9 + len(DEFAULT_RU_DIRECT_RULES)] == list(DEFAULT_RU_DIRECT_RULES)
+    assert rules[9 + len(DEFAULT_RU_DIRECT_RULES) : -1] == CONFIGURED_DIRECT_RULES
+    assert len(rules) == len(set(rules))
     assert all(rule.endswith(",DIRECT,no-resolve") for rule in rules[:9])
 
     group_names = {group["name"] for group in parsed["proxy-groups"]}
@@ -271,7 +274,7 @@ def test_render_user_defaults_tun_hosts_and_geodata(profile_config, users_path):
     }
 
 
-def test_render_omits_unconfigured_operator_routing_and_geodata(
+def test_render_keeps_ru_defaults_without_operator_overrides(
     config_data, write_yaml, users_path, provider_state_dir
 ):
     config_data["mihomo"] = {
@@ -288,7 +291,12 @@ def test_render_omits_unconfigured_operator_routing_and_geodata(
     profile = build_mihomo_profile(config, user)
     groups = {group["name"]: group for group in profile["proxy-groups"]}
 
-    assert "geox-url" not in profile
+    assert profile["geox-url"] == {
+        "geoip": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/geoip.dat",
+        "geosite": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/geosite.dat",
+        "mmdb": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/geoip.metadb",
+        "asn": "https://github.com/rzemcog/subctl/releases/download/ru-geodata/GeoLite2-ASN.mmdb",
+    }
     assert groups["DIRECT-PROXY"]["filter"] == "a^"
     assert "exclude-filter" not in groups["PROVIDER-AUTO-SEED"]
     assert "exclude-filter" not in groups["EXCLUDED-NODES"]
@@ -302,8 +310,38 @@ def test_render_omits_unconfigured_operator_routing_and_geodata(
         "IP-CIDR,::1/128,DIRECT,no-resolve",
         "IP-CIDR,fc00::/7,DIRECT,no-resolve",
         "IP-CIDR,fe80::/10,DIRECT,no-resolve",
+        *DEFAULT_RU_DIRECT_RULES,
         "MATCH,BASE",
     ]
+
+
+def test_ru_default_rules_normalize_and_deduplicate_operator_duplicates(
+    config_data, write_yaml, users_path, provider_state_dir
+):
+    config_data["mihomo"]["routing"]["direct_rules"] = [
+        "GEOSITE,vk,DIRECT",
+        "DOMAIN-SUFFIX,.ru,DIRECT",
+        "DOMAIN-SUFFIX,.рф,DIRECT",
+        "GEOIP,ru,DIRECT",
+        "DOMAIN-SUFFIX,.Example.invalid,DIRECT-NODES",
+        "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+    ]
+    config = load_config(
+        write_yaml("duplicate-ru-rules.yaml", config_data),
+        state_dir=provider_state_dir,
+    )
+    user = load_users(users_path).users["alice"]
+
+    profile = build_mihomo_profile(config, user)
+    rules = profile["rules"]
+    routed = [rule for rule in rules if rule.endswith(",DIRECT-NODES")]
+
+    assert rules.count("GEOSITE,VK,DIRECT-NODES") == 1
+    assert rules.count("DOMAIN-SUFFIX,ru,DIRECT-NODES") == 1
+    assert rules.count("DOMAIN-SUFFIX,xn--p1ai,DIRECT-NODES") == 1
+    assert rules.count("GEOIP,RU,DIRECT-NODES") == 1
+    assert rules.count("DOMAIN-SUFFIX,example.invalid,DIRECT-NODES") == 1
+    assert len(routed) == len(set(routed))
 
 
 def test_render_includes_protected_mihomo_hosts_mapping(

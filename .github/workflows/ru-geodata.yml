@@ -1,0 +1,94 @@
+name: Build merged RU geodata
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ru-geodata.yml"
+      - "src/subctl/geodata.py"
+      - "src/subctl/routing.py"
+      - "tests/test_geodata.py"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ru-geodata-publish
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download source geodata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tmp/ru-geodata/source tmp/ru-geodata/dist
+          base_meta="https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest"
+          base_ru="https://github.com/kepler103b/geo-for-ru-only/releases/download/latest"
+          curl --fail --location --retry 3 "$base_meta/geoip.dat" -o tmp/ru-geodata/source/meta-geoip.dat
+          curl --fail --location --retry 3 "$base_meta/geosite.dat" -o tmp/ru-geodata/source/meta-geosite.dat
+          curl --fail --location --retry 3 "$base_meta/GeoLite2-ASN.mmdb" -o tmp/ru-geodata/dist/GeoLite2-ASN.mmdb
+          curl --fail --location --retry 3 "$base_ru/geoip.dat" -o tmp/ru-geodata/source/ru-geoip.dat
+          curl --fail --location --retry 3 "$base_ru/geosite.dat" -o tmp/ru-geodata/source/ru-geosite.dat
+
+      - name: Merge and minimize geodata
+        env:
+          PYTHONPATH: src
+        run: >-
+          python -m subctl.geodata
+          --meta-geoip tmp/ru-geodata/source/meta-geoip.dat
+          --ru-geoip tmp/ru-geodata/source/ru-geoip.dat
+          --meta-geosite tmp/ru-geodata/source/meta-geosite.dat
+          --ru-geosite tmp/ru-geodata/source/ru-geosite.dat
+          --output-dir tmp/ru-geodata/dist
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Convert merged GeoIP DAT to MetaDB
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install -trimpath -ldflags="-s -w -buildid=" github.com/metacubex/geo/cmd/geo@master
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          geo convert ip -i v2ray -o meta -f tmp/ru-geodata/dist/geoip.metadb tmp/ru-geodata/dist/geoip.dat
+          test -s tmp/ru-geodata/dist/geoip.metadb
+          (cd tmp/ru-geodata/dist && sha256sum geoip.dat geosite.dat geoip.metadb GeoLite2-ASN.mmdb > SHA256SUMS)
+
+      - name: Publish versioned asset set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="ru-geodata"
+          files=(
+            tmp/ru-geodata/dist/geoip.dat
+            tmp/ru-geodata/dist/geosite.dat
+            tmp/ru-geodata/dist/geoip.metadb
+            tmp/ru-geodata/dist/GeoLite2-ASN.mmdb
+            tmp/ru-geodata/dist/direct-rules.txt
+            tmp/ru-geodata/dist/SHA256SUMS
+          )
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" "${files[@]}" \
+              --title "Merged RU geodata" \
+              --notes "Deduplicated MetaCubeX geodata merged with RU-only GeoIP/GeoSite records. Generated daily from upstream sources." \
+              --latest=false \
+              --repo "$GITHUB_REPOSITORY"
+          fi
