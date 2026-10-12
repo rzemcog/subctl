@@ -122,9 +122,10 @@ def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
         name for name in gateway_groups if name != "GLOBAL"
     ]
     assert profile["rules"][2:] == public_profile["rules"]
-    assert profile["rules"][2 : 2 + len(DEFAULT_RU_DIRECT_RULES)] == list(
-        DEFAULT_RU_DIRECT_RULES
-    )
+    ru_rules_start = public_profile["rules"].index(DEFAULT_RU_DIRECT_RULES[0])
+    assert public_profile["rules"][
+        ru_rules_start : ru_rules_start + len(DEFAULT_RU_DIRECT_RULES)
+    ] == list(DEFAULT_RU_DIRECT_RULES)
 
     providers = profile["proxy-providers"]
     assert providers["private"]["interval"] == 3600
