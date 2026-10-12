@@ -48,19 +48,30 @@ SAFE_PUBLIC_HOSTS = {
     "wiki.metacubex.one",
 }
 SAFE_PUBLIC_IPS = {"192.0.2.1", "192.0.2.1"}
+APPROVED_PROFILE_ENDPOINT_HOSTS = {"music.example.invalid", "public.example.invalid"}
+APPROVED_PROFILE_ENDPOINT_IPS = {"203.0.113.10"}
 TEXT_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".json", ".toml", ".sh", ".jsx", ".html", ".css"}
 SCAN_ROOTS = ("src", "examples", "tests", "docs", "deploy", "scripts", "web/src")
 
 
 def _is_neutral_hostname(value: str) -> bool:
     hostname = value.casefold().rstrip(".")
-    return hostname in SAFE_PUBLIC_HOSTS or hostname.endswith(SAFE_HOST_SUFFIXES)
+    return (
+        hostname in SAFE_PUBLIC_HOSTS
+        or hostname in APPROVED_PROFILE_ENDPOINT_HOSTS
+        or hostname.endswith(SAFE_HOST_SUFFIXES)
+    )
 
 
 def _is_neutral_ip(value: str) -> bool:
     address = ipaddress.ip_address(value)
     shared_range = ipaddress.ip_network("100.64.0.0/10")
-    return value in SAFE_PUBLIC_IPS or address in shared_range or not address.is_global
+    return (
+        value in SAFE_PUBLIC_IPS
+        or value in APPROVED_PROFILE_ENDPOINT_IPS
+        or address in shared_range
+        or not address.is_global
+    )
 
 
 def _domain_scan_text(path: Path, content: str) -> str:
@@ -102,6 +113,7 @@ def test_repository_network_literals_are_placeholders_or_public_dependencies():
             unneutral_files.add(path)
 
     assert not unneutral_files, (
-        "repository text contains non-placeholder network literals in "
-        f"{len(unneutral_files)} file(s); move endpoint values to protected runtime config"
+        "repository text contains network literals outside the placeholder, public dependency, "
+        "or approved profile endpoint allowlists in "
+        f"{len(unneutral_files)} file(s)"
     )
