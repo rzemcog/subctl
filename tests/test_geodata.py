@@ -63,14 +63,14 @@ def _ip_list(entries):
 def test_geosite_merge_deduplicates_domains_and_keeps_new_tags():
     base = _site_list(
         [
-            _geosite_entry("CATEGORY-RU", [(2, "service.ru"), (3, "example.com")]),
-            _geosite_entry("VK", [(2, "vk.com")]),
+            _geosite_entry("CATEGORY-RU", [(2, "service.example"), (3, "example.com")]),
+            _geosite_entry("VK", [(2, "vk.example.com")]),
         ]
     )
     supplement = _site_list(
         [
-            _geosite_entry("CATEGORY-RU", [(2, "service.ru"), (2, "new.ru")]),
-            _geosite_entry("2GIS", [(2, "2gis.com")]),
+            _geosite_entry("CATEGORY-RU", [(2, "service.example"), (2, "new.example")]),
+            _geosite_entry("2GIS", [(2, "2gis.example.com")]),
         ]
     )
 
@@ -78,22 +78,22 @@ def test_geosite_merge_deduplicates_domains_and_keeps_new_tags():
     tags = _read_geosite(merged)
 
     assert tags["CATEGORY-RU"] == {
-        (2, "service.ru"),
+        (2, "service.example"),
         (3, "example.com"),
-        (2, "new.ru"),
+        (2, "new.example"),
     }
-    assert tags["2GIS"] == {(2, "2gis.com")}
+    assert tags["2GIS"] == {(2, "2gis.example.com")}
 
 
 def test_ru_geosite_rules_are_minimized_against_manual_rules():
     site = _site_list(
         [
-            _geosite_entry("VK", [(2, "vk.com")]),
-            _geosite_entry("MAILRU", [(2, "mail.ru")]),
-            _geosite_entry("MAILRU-GROUP", [(2, "mail.ru")]),
-            _geosite_entry("CATEGORY-RU", [(2, "service.ru")]),
-            _geosite_entry("RU-ONLY-ALIAS", [(2, "service.ru")]),
-            _geosite_entry("2GIS", [(2, "map.2gis.ru"), (2, "2gis.com")]),
+            _geosite_entry("VK", [(2, "vk.example.com")]),
+            _geosite_entry("MAILRU", [(2, "mail.example")]),
+            _geosite_entry("MAILRU-GROUP", [(2, "mail.example")]),
+            _geosite_entry("CATEGORY-RU", [(2, "service.example")]),
+            _geosite_entry("RU-ONLY-ALIAS", [(2, "service.example")]),
+            _geosite_entry("2GIS", [(2, "map.2gis.example.com"), (2, "2gis.example.com")]),
         ]
     )
 
@@ -148,10 +148,10 @@ def test_build_ru_geodata_writes_one_minimized_rule_list(tmp_path):
     meta_geosite.write_bytes(
         _site_list(
             [
-                _geosite_entry("VK", [(2, "vk.com")]),
-                _geosite_entry("MAILRU", [(2, "mail.ru")]),
-                _geosite_entry("CATEGORY-RU", [(2, "service.ru")]),
-                _geosite_entry("2GIS", [(2, "2gis.com")]),
+                _geosite_entry("VK", [(2, "vk.example.com")]),
+                _geosite_entry("MAILRU", [(2, "mail.example")]),
+                _geosite_entry("CATEGORY-RU", [(2, "service.example")]),
+                _geosite_entry("2GIS", [(2, "2gis.example.com")]),
             ]
         )
     )

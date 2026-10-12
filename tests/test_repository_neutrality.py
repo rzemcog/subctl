@@ -48,6 +48,7 @@ SAFE_PUBLIC_HOSTS = {
     "example.org",
     "github.com",
     "gstatic.com",
+    "music.yandex.com",
     "pypi.org",
     "caddyserver.com",
     "python.org",
