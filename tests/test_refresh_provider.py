@@ -9,10 +9,65 @@ import pytest
 from conftest import VALID_PROVIDER_TOKEN, assert_no_traceback, assert_secret_not_printed
 from subctl.config import load_config
 from subctl.errors import SubctlError
+import subctl.refresh as refresh_module
 from subctl.refresh import refresh_provider
 
 
 PROXY_LINES = "ss://YWVzLTEyOC1nY206cGFzcw@example.com:443#node-1\n"
+
+
+def test_fetch_url_retries_temporary_503(monkeypatch):
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b"provider payload"
+
+    calls = []
+    delays = []
+
+    def fake_urlopen(request, timeout):
+        calls.append((request.full_url, timeout))
+        if len(calls) < 3:
+            raise urllib.error.HTTPError(request.full_url, 503, "unavailable", {}, None)
+        return Response()
+
+    monkeypatch.setattr(refresh_module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(refresh_module.time, "sleep", delays.append)
+
+    body = refresh_module._fetch_url("https://provider.example/subscription", 4)
+
+    assert body == b"provider payload"
+    assert calls == [
+        ("https://provider.example/subscription", 4),
+        ("https://provider.example/subscription", 4),
+        ("https://provider.example/subscription", 4),
+    ]
+    assert delays == [1, 1]
+
+
+def test_fetch_url_does_not_retry_client_error(monkeypatch):
+    calls = []
+    delays = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request.full_url)
+        raise urllib.error.HTTPError(request.full_url, 404, "not found", {}, None)
+
+    monkeypatch.setattr(refresh_module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(refresh_module.time, "sleep", delays.append)
+
+    with pytest.raises(SubctlError, match="HTTP status 404"):
+        refresh_module._fetch_url("https://provider.example/subscription", 4)
+
+    assert calls == ["https://provider.example/subscription"]
+    assert delays == []
 
 
 def test_refresh_provider_success_writes_cache_and_public_files(

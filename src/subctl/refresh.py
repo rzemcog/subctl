@@ -17,6 +17,8 @@ from .provider import ProviderFeed, validate_provider_subscription
 from .public_files import PUBLIC_FILE_MODE, ensure_public_directory
 
 DEFAULT_FETCH_TIMEOUT_SECONDS = 20
+UPSTREAM_FETCH_ATTEMPTS = 3
+UPSTREAM_FETCH_RETRY_DELAY_SECONDS = 1
 
 
 @dataclass(frozen=True)
@@ -177,11 +179,23 @@ def _duration_ms(started: float) -> int:
 
 def _fetch_url(url: str, timeout_seconds: float) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "subctl/0.1"})
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        status = getattr(response, "status", 200)
-        if status >= 400:
-            raise UpstreamError(f"provider fetch failed: HTTP status {status}")
-        return response.read()
+    for attempt in range(UPSTREAM_FETCH_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                status = getattr(response, "status", 200)
+                if status >= 400:
+                    if status < 500 or attempt + 1 == UPSTREAM_FETCH_ATTEMPTS:
+                        raise UpstreamError(f"provider fetch failed: HTTP status {status}")
+                else:
+                    return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code < 500 or attempt + 1 == UPSTREAM_FETCH_ATTEMPTS:
+                raise UpstreamError(f"provider fetch failed: HTTP status {exc.code}") from exc
+            exc.close()
+
+        time.sleep(UPSTREAM_FETCH_RETRY_DELAY_SECONDS)
+
+    raise UpstreamError("provider fetch failed")
 
 
 def _write_transaction(targets: dict[Path, tuple[str, int | None]]) -> None:
