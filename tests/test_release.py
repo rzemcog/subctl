@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,94 @@ def test_runtime_verifier_pins_public_smoke_to_loopback(monkeypatch, tmp_path):
 
     assert result == package_info
     assert calls[-1][1]["SUBCTL_SMOKE_CONNECT_IP"] == "127.0.0.1"
+
+
+def test_http_health_retries_transient_startup_failure(monkeypatch):
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, _size):
+            return b"ok"
+
+    requests = []
+    delays = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request.full_url, timeout))
+        if len(requests) == 1:
+            raise urllib.error.URLError("connection refused")
+        return Response()
+
+    monkeypatch.setattr(release.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(release.time, "sleep", delays.append)
+
+    release._check_http_health()
+
+    assert [url for url, _ in requests] == [
+        "http://127.0.0.1:12790/",
+        "http://127.0.0.1:12790/",
+        "http://127.0.0.1:12790/health",
+        "http://127.0.0.1:12790/healthz",
+    ]
+    assert all(timeout <= 2 for _, timeout in requests)
+    assert delays == [0.25]
+
+
+def test_http_health_fails_fast_for_client_error(monkeypatch):
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(request.full_url)
+        raise urllib.error.HTTPError(request.full_url, 404, "not found", {}, None)
+
+    monkeypatch.setattr(release.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(release.ReleaseError, match="returned HTTP 404"):
+        release._check_http_health()
+
+    assert requests == ["http://127.0.0.1:12790/"]
+
+
+def test_http_health_retries_server_error(monkeypatch):
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, _size):
+            return b"ok"
+
+    requests = []
+    delays = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            raise urllib.error.HTTPError(request.full_url, 503, "unavailable", {}, None)
+        return Response()
+
+    monkeypatch.setattr(release.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(release.time, "sleep", delays.append)
+
+    release._check_http_health()
+
+    assert requests == [
+        "http://127.0.0.1:12790/",
+        "http://127.0.0.1:12790/",
+        "http://127.0.0.1:12790/health",
+        "http://127.0.0.1:12790/healthz",
+    ]
+    assert delays == [0.25]
 
 
 def test_bundle_binds_commit_to_immutable_artifact_and_hashes(tmp_path):

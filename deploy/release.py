@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -38,6 +39,9 @@ REQUIRED_UNITS = (WEB_SERVICE, REFRESH_SERVICE, REFRESH_TIMER)
 FORMAT_VERSION = 1
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DOMAIN_RE = re.compile(r"^[A-Za-z0-9.-]+$")
+HEALTH_REQUEST_TIMEOUT_SECONDS = 2
+HEALTH_RETRY_ATTEMPTS = 5
+HEALTH_RETRY_DELAY_SECONDS = 0.25
 
 
 class ReleaseError(RuntimeError):
@@ -724,14 +728,44 @@ def _verify_installed_assets(manifest: dict[str, Any]) -> None:
 
 def _check_http_health() -> None:
     for path in ("/", "/health", "/healthz"):
-        request = urllib.request.Request(f"http://127.0.0.1:12790{path}", method="GET")
-        try:
-            with urllib.request.urlopen(request, timeout=8) as response:
-                if response.status != 200:
-                    raise ReleaseError(f"local health request {path} returned HTTP {response.status}")
-                response.read(4096)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise ReleaseError(f"local health request failed for {path}") from exc
+        last_error: Exception | None = None
+        for attempt in range(HEALTH_RETRY_ATTEMPTS):
+            request = urllib.request.Request(f"http://127.0.0.1:12790{path}", method="GET")
+            try:
+                with urllib.request.urlopen(
+                    request,
+                    timeout=HEALTH_REQUEST_TIMEOUT_SECONDS,
+                ) as response:
+                    if response.status == 200:
+                        response.read(4096)
+                        break
+                    if response.status < 500:
+                        raise ReleaseError(
+                            f"local health request {path} returned HTTP {response.status}"
+                        )
+                    last_error = ReleaseError(
+                        f"local health request {path} returned HTTP {response.status}"
+                    )
+            except urllib.error.HTTPError as exc:
+                if exc.code < 500:
+                    raise ReleaseError(
+                        f"local health request {path} returned HTTP {exc.code}"
+                    ) from exc
+                exc.close()
+                last_error = exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                last_error = exc
+
+            if attempt + 1 < HEALTH_RETRY_ATTEMPTS:
+                time.sleep(HEALTH_RETRY_DELAY_SECONDS)
+                continue
+            if isinstance(last_error, urllib.error.HTTPError):
+                raise ReleaseError(
+                    f"local health request {path} returned HTTP {last_error.code}"
+                ) from last_error
+            if isinstance(last_error, ReleaseError):
+                raise last_error
+            raise ReleaseError(f"local health request failed for {path}") from last_error
 
 
 def _verify_runtime(bundle: Path, manifest: dict[str, Any], *, include_smoke: bool) -> dict[str, Any]:
