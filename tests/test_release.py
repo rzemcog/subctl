@@ -68,6 +68,91 @@ def test_smoke_connect_override_rejects_non_ip_address():
         smoke.install_connect_ip_override("subscriptions.example", "localhost")
 
 
+def test_smoke_control_endpoint_requires_empty_204():
+    class FakeResponse:
+        status = 204
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b""
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            assert request.full_url == "https://subscriptions.example/.well-known/health-control/204"
+            assert timeout == 15
+            return FakeResponse()
+
+    smoke.check_empty_204(
+        "https://subscriptions.example/.well-known/health-control/204",
+        FakeOpener(),
+    )
+
+
+def test_smoke_can_skip_new_control_route_during_fallback(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "public:\n  base_url: https://subscriptions.example\n"
+        "provider:\n  shared_token: synthetic-token\n",
+        encoding="utf-8",
+    )
+    users_path = tmp_path / "users.yaml"
+    users_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("SUBCTL_CONFIG", str(config_path))
+    monkeypatch.setenv("SUBCTL_USERS", str(users_path))
+    monkeypatch.delenv("SUBCTL_SMOKE_CONNECT_IP", raising=False)
+    monkeypatch.setenv("SUBCTL_SMOKE_CHECK_health_CONTROL", "0")
+    requests = []
+    monkeypatch.setattr(smoke, "fetch", lambda url, opener=None: requests.append(url))
+    monkeypatch.setattr(
+        smoke,
+        "check_empty_204",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("fallback must not require the new route")),
+    )
+
+    smoke.main()
+
+    assert requests == ["https://subscriptions.example/feeds/provider/synthetic-token"]
+
+
+@pytest.mark.parametrize(("scheme", "users"), [("http", "{}"), ("https", "{}")])
+def test_smoke_base_url_scheme_is_checked_before_requests(monkeypatch, tmp_path, scheme, users):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"public:\n  base_url: {scheme}://subscriptions.example\n"
+        "provider:\n  shared_token: synthetic-token\n",
+        encoding="utf-8",
+    )
+    users_path = tmp_path / "users.yaml"
+    users_path.write_text(users, encoding="utf-8")
+    monkeypatch.setenv("SUBCTL_CONFIG", str(config_path))
+    monkeypatch.setenv("SUBCTL_USERS", str(users_path))
+    monkeypatch.delenv("SUBCTL_SMOKE_CONNECT_IP", raising=False)
+    requests = []
+    monkeypatch.setattr(smoke, "fetch", lambda url, opener=None: requests.append(("fetch", url)))
+    monkeypatch.setattr(
+        smoke,
+        "check_empty_204",
+        lambda url, opener=None: requests.append(("control", url)),
+    )
+
+    if scheme == "http":
+        with pytest.raises(SystemExit, match="HTTPS hostname"):
+            smoke.main()
+        assert requests == []
+    else:
+        # An empty registry still schedules the independent health control check.
+        smoke.main()
+        assert requests == [
+            ("fetch", "https://subscriptions.example/feeds/provider/synthetic-token"),
+            ("control", "https://subscriptions.example/.well-known/health-control/204"),
+        ]
+
+
 def test_runtime_verifier_pins_public_smoke_to_loopback(monkeypatch, tmp_path):
     calls = []
     package_info = {"application_version": "0.1.0"}
@@ -81,6 +166,44 @@ def test_runtime_verifier_pins_public_smoke_to_loopback(monkeypatch, tmp_path):
 
     assert result == package_info
     assert calls[-1][1]["SUBCTL_SMOKE_CONNECT_IP"] == "127.0.0.1"
+    assert calls[-1][1]["SUBCTL_SMOKE_CHECK_health_CONTROL"] == "1"
+
+
+def test_runtime_verifier_can_skip_new_control_route_for_fallback_smoke(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(release, "_is_active", lambda unit: True)
+    monkeypatch.setattr(release, "_verify_installed_assets", lambda manifest: None)
+    monkeypatch.setattr(release, "_verify_installed_application", lambda bundle: {})
+    monkeypatch.setattr(release, "_check_http_health", lambda: None)
+    monkeypatch.setattr(release, "_run", lambda command, **kwargs: calls.append(kwargs.get("env")))
+
+    release._verify_runtime(
+        tmp_path,
+        {},
+        include_smoke=True,
+        include_health_control=False,
+    )
+
+    assert calls[-1]["SUBCTL_SMOKE_CONNECT_IP"] == "127.0.0.1"
+    assert calls[-1]["SUBCTL_SMOKE_CHECK_health_CONTROL"] == "0"
+
+
+def test_restore_fallback_does_not_require_new_control_route(monkeypatch, tmp_path):
+    verification_calls = []
+    monkeypatch.setattr(release, "_systemctl", lambda *_args: None)
+    monkeypatch.setattr(release, "_is_active", lambda unit: unit == release.REFRESH_TIMER)
+    monkeypatch.setattr(release, "_apply_bundle", lambda _bundle: None)
+    monkeypatch.setattr(
+        release,
+        "_verify_runtime",
+        lambda _bundle, _manifest, **kwargs: verification_calls.append(kwargs),
+    )
+    monkeypatch.setattr(release, "_resume_timer", lambda: None)
+    monkeypatch.setattr(release, "_mark_active", lambda *_args, **_kwargs: None)
+
+    release._restore_fallback(tmp_path / "fallback", {}, tmp_path / "releases", "failed-release")
+
+    assert verification_calls == [{"include_smoke": True, "include_health_control": False}]
 
 
 def test_http_health_retries_transient_startup_failure(monkeypatch):

@@ -768,7 +768,13 @@ def _check_http_health() -> None:
             raise ReleaseError(f"local health request failed for {path}") from last_error
 
 
-def _verify_runtime(bundle: Path, manifest: dict[str, Any], *, include_smoke: bool) -> dict[str, Any]:
+def _verify_runtime(
+    bundle: Path,
+    manifest: dict[str, Any],
+    *,
+    include_smoke: bool,
+    include_health_control: bool = True,
+) -> dict[str, Any]:
     if not _is_active(WEB_SERVICE):
         raise ReleaseError(f"{WEB_SERVICE} is not active")
     if not _is_active("caddy.service"):
@@ -781,6 +787,7 @@ def _verify_runtime(bundle: Path, manifest: dict[str, Any], *, include_smoke: bo
     if include_smoke:
         smoke_env = os.environ.copy()
         smoke_env["SUBCTL_SMOKE_CONNECT_IP"] = "127.0.0.1"
+        smoke_env["SUBCTL_SMOKE_CHECK_health_CONTROL"] = "1" if include_health_control else "0"
         _run(
             [str(VENV_DIR / "bin" / "python"), str(SOURCE_ROOT / "scripts" / "smoke-caddy.py")],
             env=smoke_env,
@@ -892,7 +899,12 @@ def _restore_fallback(
         _systemctl("stop", WEB_SERVICE)
         _apply_bundle(fallback_bundle)
         _systemctl("restart", WEB_SERVICE)
-        _verify_runtime(fallback_bundle, fallback_manifest, include_smoke=True)
+        _verify_runtime(
+            fallback_bundle,
+            fallback_manifest,
+            include_smoke=True,
+            include_health_control=False,
+        )
         _resume_timer()
         if not _is_active(REFRESH_TIMER):
             raise ReleaseError(f"{REFRESH_TIMER} did not resume after recovery")

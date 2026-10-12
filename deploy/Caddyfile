@@ -38,5 +38,14 @@ http://{$SUBCTL_DOMAIN} {
 }
 
 {$SUBCTL_DOMAIN} {
-	import subctl_static
+	@health_control {
+		path /.well-known/health-control/204
+		protocol https
+	}
+	handle @health_control {
+		respond 204
+	}
+	handle {
+		import subctl_static
+	}
 }

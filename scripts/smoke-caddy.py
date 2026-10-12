@@ -46,6 +46,22 @@ def fetch(url: str, opener: urllib.request.OpenerDirector | None = None) -> int:
     return len(body)
 
 
+def check_empty_204(url: str, opener: urllib.request.OpenerDirector | None = None) -> None:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "subctl-smoke/1"},
+    )
+    try:
+        open_url = opener.open if opener is not None else urllib.request.urlopen
+        with open_url(request, timeout=15) as response:
+            body = response.read()
+            status = response.status
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise SystemExit("health control endpoint is unreachable") from exc
+    if status != 204 or body:
+        raise SystemExit(f"health control endpoint returned HTTP {status} or a response body")
+
+
 def main() -> None:
     config_path = Path(os.environ.get("SUBCTL_CONFIG", "/etc/subctl/config.yaml"))
     users_path = Path(os.environ.get("SUBCTL_USERS", "/var/lib/subctl/registry/users.yaml"))
@@ -53,8 +69,8 @@ def main() -> None:
     users = yaml.safe_load(users_path.read_text(encoding="utf-8")) or {}
     base_url = config["public"]["base_url"].rstrip("/")
     public_host = urlsplit(base_url).hostname
-    if not public_host:
-        raise SystemExit("public base URL has no hostname")
+    if not public_host or urlsplit(base_url).scheme != "https":
+        raise SystemExit("public base URL must have an HTTPS hostname")
     connect_ip = os.environ.get("SUBCTL_SMOKE_CONNECT_IP")
     opener = None
     if connect_ip:
@@ -66,6 +82,8 @@ def main() -> None:
         checks.extend(((f"{name}:yaml", f"{base_url}/s/{token}.yaml"), (f"{name}:raw", f"{base_url}/s/{token}.raw")))
     for _, url in checks:
         fetch(url, opener)
+    if os.environ.get("SUBCTL_SMOKE_CHECK_health_CONTROL", "1") == "1":
+        check_empty_204(f"{base_url}/.well-known/health-control/204", opener)
     print(f"public subscription smoke: passed ({len(checks)} endpoints)")
 
 
