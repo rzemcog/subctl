@@ -70,7 +70,7 @@ def test_raw_render_prefixes_and_encodes_unescaped_fragment_spaces(
     assert decoded.splitlines()[0].endswith("#PRIVATE%20%7C%20alice%20node")
 
 
-def test_raw_render_excludes_shared_provider_nodes_by_name(
+def test_raw_render_preserves_provider_nodes_excluded_from_yaml_selection(
     tmp_path, config_path, users_path
 ):
     config = load_config(
@@ -84,8 +84,8 @@ def test_raw_render_excludes_shared_provider_nodes_by_name(
     cache.write_text(
         "\n".join(
             [
-                "trojan://pass@one.example:443#SampleRegion-1",
-                "trojan://pass@two.example:443#SampleRegion-2",
+                "trojan://pass@one.example:443#Excluded-1",
+                "trojan://pass@two.example:443#Excluded-2",
                 "trojan://pass@three.example:443#Ordinary-3",
             ]
         ),
@@ -103,7 +103,12 @@ def test_raw_render_excludes_shared_provider_nodes_by_name(
     decoded = base64.b64decode(raw_path.read_text(encoding="utf-8")).decode("utf-8")
     names = [unquote(urlsplit(uri).fragment) for uri in decoded.splitlines()]
 
-    assert names == ["PRIVATE | alice node", "PROVIDER | Ordinary-3"]
+    assert names == [
+        "PRIVATE | alice node",
+        "PROVIDER | Excluded-1",
+        "PROVIDER | Excluded-2",
+        "PROVIDER | Ordinary-3",
+    ]
 
 
 def test_raw_render_missing_provider_cache_errors_with_refresh_hint(

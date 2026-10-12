@@ -695,8 +695,7 @@ def _load_provider_lines(config: AppConfig) -> tuple[str, ...]:
     except OSError as exc:
         raise ValidationError("provider cache cannot be read") from exc
     feed = validate_provider_subscription(text)
-    keywords = config.render.provider_exclude_keywords
-    return tuple(uri for uri in feed.uris if not _uri_name_contains(uri, keywords))
+    return feed.uris
 
 
 def _fetch_personal_feed(
@@ -761,13 +760,6 @@ def _unique_keywords(keywords: tuple[str, ...]) -> tuple[str, ...]:
             seen.add(normalized)
             unique.append(keyword)
     return tuple(unique)
-
-
-def _uri_name_contains(uri: str, keywords: tuple[str, ...]) -> bool:
-    if not keywords:
-        return False
-    name = unquote(urlsplit(uri).fragment).casefold()
-    return any(keyword.casefold() in name for keyword in keywords)
 
 
 def _write_render_status(config: AppConfig, summary: RenderSummary) -> None:
