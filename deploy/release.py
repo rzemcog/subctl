@@ -577,13 +577,16 @@ def _load_anchor(release_root: Path) -> tuple[dict[str, Any] | None, Path | None
     anchor = _read_json(release_root / "anchor.json")
     if anchor is None:
         return None, None, None
-    if (
-        anchor.get("git_commit") != "commit-id"
-        or anchor.get("historical_runtime_relation") != "inferred"
-    ):
-        raise ReleaseError("anchor.json does not describe the accepted inferred 780fe63 baseline")
+    commit = anchor.get("git_commit")
+    if not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit):
+        raise ReleaseError("anchor.json must name a full Git commit SHA")
+    if anchor.get("historical_runtime_relation") != "inferred":
+        raise ReleaseError("anchor.json must describe an inferred historical runtime relation")
     bundle, manifest = _load_release(anchor.get("release_id", ""), release_root)
-    if manifest.get("git_commit") != anchor["git_commit"] or manifest.get("historical_runtime_relation") != "inferred":
+    if (
+        manifest.get("git_commit") != commit
+        or manifest.get("historical_runtime_relation") != "inferred"
+    ):
         raise ReleaseError("rollback anchor record does not match its immutable release bundle")
     return anchor, bundle, manifest
 
@@ -624,7 +627,7 @@ def _validate_live_snapshot(commit: str, domain: str, snapshot_dir: Path) -> Non
             active = UNIT_DIR / name
             expected = source / "deploy" / name
             if not active.is_file() or active.is_symlink() or active.read_bytes() != expected.read_bytes():
-                raise ReleaseError(f"active {name} does not match the selected 780fe63 baseline")
+                raise ReleaseError(f"active {name} does not match the selected baseline")
             shutil.copyfile(active, snapshot_dir / name)
         active_caddy = CADDY_FILE
         expected_caddy = _render_caddy((source / "deploy" / "Caddyfile").read_bytes(), domain)
@@ -638,8 +641,8 @@ def _validate_live_snapshot(commit: str, domain: str, snapshot_dir: Path) -> Non
 def bootstrap(commit: str, domain: str, *, release_root: Path = RELEASE_ROOT) -> Path:
     _require_root()
     commit = commit.lower()
-    if commit != "commit-id":
-        raise ReleaseError("the first rollback anchor is fixed to the accepted 780fe63 baseline")
+    if not COMMIT_RE.fullmatch(commit):
+        raise ReleaseError("rollback anchor commit must be a full Git SHA")
     anchor_path = release_root / "anchor.json"
     if anchor_path.exists():
         anchor, bundle, _ = _load_anchor(release_root)
@@ -669,7 +672,8 @@ def bootstrap(commit: str, domain: str, *, release_root: Path = RELEASE_ROOT) ->
             "git_commit": commit,
             "historical_runtime_relation": "inferred",
             "note": (
-                "780fe63 is the nearest reproducible Git baseline to the production process that was running; "
+                "The selected Git commit is the nearest reproducible baseline "
+                "to the production process that was running; "
                 "the exact in-memory runtime revision is not proven."
             ),
             "recorded_at_utc": utc_now(),
@@ -773,7 +777,7 @@ def _verify_runtime(
     manifest: dict[str, Any],
     *,
     include_smoke: bool,
-    include_health_control: bool = True,
+    include_control_endpoint: bool = True,
 ) -> dict[str, Any]:
     if not _is_active(WEB_SERVICE):
         raise ReleaseError(f"{WEB_SERVICE} is not active")
@@ -787,7 +791,9 @@ def _verify_runtime(
     if include_smoke:
         smoke_env = os.environ.copy()
         smoke_env["SUBCTL_SMOKE_CONNECT_IP"] = "127.0.0.1"
-        smoke_env["SUBCTL_SMOKE_CHECK_health_CONTROL"] = "1" if include_health_control else "0"
+        smoke_env["SUBCTL_SMOKE_CHECK_CONTROL_ENDPOINT"] = (
+            "1" if include_control_endpoint else "0"
+        )
         _run(
             [str(VENV_DIR / "bin" / "python"), str(SOURCE_ROOT / "scripts" / "smoke-caddy.py")],
             env=smoke_env,
@@ -903,7 +909,7 @@ def _restore_fallback(
             fallback_bundle,
             fallback_manifest,
             include_smoke=True,
-            include_health_control=False,
+            include_control_endpoint=False,
         )
         _resume_timer()
         if not _is_active(REFRESH_TIMER):

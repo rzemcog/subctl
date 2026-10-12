@@ -6,27 +6,29 @@ the bundle also retains the dependency wheels and matching systemd/Caddy files.
 The package is built from a clean, already-pushed commit using `git archive`.
 Rollback installs the saved bundle and never rebuilds an old commit.
 
-## Confirmed production topology
+## Runtime layout
 
-On `example-host`:
+The source checkout location and SSH target are selected by each operator and
+belong in private local configuration. Set `SUBCTL_SOURCE_DIR` to the checkout
+path and `SUBCTL_SSH_TARGET` to a destination from the local SSH config before
+using the remote commands below. The installer uses these standard service
+locations on the target host:
 
 ```text
-$SUBCTL_SOURCE_DIR                 Git source/control checkout
-/opt/subctl                  runtime parent; not a Git checkout
 /opt/subctl/venv             installed Python runtime
-/etc/subctl/config.yaml      protected production configuration
+/etc/subctl/config.yaml      protected deployment configuration
 /var/lib/subctl/registry/    protected user registry
 /var/lib/subctl/{cache,public,ui}/ generated runtime state
-/etc/systemd/system/         active subctl service and timer files
-/etc/caddy/Caddyfile         active rendered Caddy configuration
-/var/lib/subctl/releases/    immutable release bundles and release records
+/etc/systemd/system/         installed service and timer files
+/etc/caddy/Caddyfile         rendered Caddy configuration
+/var/lib/subctl/releases/    immutable release bundles and records
 ```
 
 `/var/lib/subctl/releases/<release-id>/` contains `manifest.json`, the
-application wheel, a runtime dependency wheelhouse, three systemd snapshots,
-and the rendered Caddyfile. The manifest records the full commit, package
-filename and SHA256, all bundle file hashes, build time, and build environment.
-The full commit and bundle SHA256 form the release ID. A deployment event and
+application wheel, a runtime dependency wheelhouse, service snapshots, and the
+rendered Caddyfile. The manifest records the full commit, package filename and
+SHA256, all bundle file hashes, build time, and build environment. The full
+commit and bundle SHA256 form the release ID. A deployment event and
 `current.json` record the successful deployment or rollback time. `anchor.json`
 identifies the initial fallback. These records and bundles are root-owned; the
 bundle files are read-only and existing release IDs are never overwritten.
@@ -37,29 +39,29 @@ release bundle. The release installer does not copy or replace them.
 
 ## First rollback anchor
 
-The first Release N anchor is based on commit
-`commit-id`. This is the nearest reproducible
-Git baseline to the production process that was running. It is **not proven to
-be the exact revision loaded in that process**; the historical relationship is
-recorded as `inferred` in the manifest and `anchor.json`.
+Choose a full commit SHA whose tracked service and Caddy files match the active
+files on the target host. Bootstrap verifies that match before it writes the
+anchor or stores a fallback bundle. The anchor records the historical runtime
+relationship as `inferred`; it does not claim to prove the exact source that a
+previously running process loaded.
 
-Bootstrap stores the package built from that commit and captures the currently
-active systemd/Caddy files after verifying that they match the selected
-baseline. It does not install the anchor or restart a service. Run this once on
-the confirmed host before the first new deployment:
+Before connecting, set `SUBCTL_SSH_TARGET` in a private local shell using your
+SSH config. After connecting, set `SUBCTL_SOURCE_DIR` in the target shell to the
+checkout path; keep both values out of the public repository. The public domain
+is read from protected configuration on the target host:
 
 ```bash
-ssh example-host
-cd $SUBCTL_SOURCE_DIR
+ssh "$SUBCTL_SSH_TARGET"
+cd "$SUBCTL_SOURCE_DIR"
 SUBCTL_DOMAIN="$(/opt/subctl/venv/bin/python -c 'import yaml; from urllib.parse import urlsplit; print(urlsplit(yaml.safe_load(open("/etc/subctl/config.yaml"))["public"]["base_url"]).hostname)')"
 sudo python3 deploy/release.py bootstrap \
-  --commit commit-id \
+  --commit "$(git rev-parse HEAD)" \
   --domain "$SUBCTL_DOMAIN"
 sudo python3 deploy/release.py status
 ```
 
-If the active infrastructure files no longer match the baseline, bootstrap
-stops before writing the anchor so the discrepancy can be reviewed.
+If the active infrastructure files no longer match the selected commit,
+bootstrap stops before writing the anchor so the discrepancy can be reviewed.
 
 ## Official deploy workflow
 
@@ -67,7 +69,7 @@ Commit and push source changes before building a package. On the production
 checkout, fetch the pushed main branch and inspect its state:
 
 ```bash
-cd $SUBCTL_SOURCE_DIR
+cd "$SUBCTL_SOURCE_DIR"
 SUBCTL_DOMAIN="$(/opt/subctl/venv/bin/python -c 'import yaml; from urllib.parse import urlsplit; print(urlsplit(yaml.safe_load(open("/etc/subctl/config.yaml"))["public"]["base_url"]).hostname)')"
 git fetch origin main
 git status --short --branch
@@ -149,6 +151,6 @@ sudo -E ./deploy/install.sh
 ```
 
 This is a bootstrap/fresh-install path, not the production upgrade or rollback
-workflow for `example-host`. Production upgrades and rollbacks must use
+workflow for an existing deployment. Production upgrades and rollbacks must use
 `deploy/release.py` so the application package and infrastructure files come
 from one verified immutable bundle.

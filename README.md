@@ -5,7 +5,7 @@ clients. It combines private subscriptions from 3x-ui with a shared provider
 feed, renders YAML and raw Base64 outputs, and publishes them through Caddy or
 the optional administration UI.
 
-The project is designed for a self-hosted Debian-based VPS. Secrets stay in
+The project is designed for a self-hosted Linux server. Secrets stay in
 protected files on the server; the repository contains only code, templates,
 tests and safe examples.
 
@@ -112,9 +112,9 @@ Production releases use a different, single official workflow:
 commit, then deploys or rolls back that bundle with matching dependencies,
 systemd files, and Caddy configuration. A release is identified by its full
 Git commit and bundle SHA256. See [Production deployment and rollback](docs/deployment.md)
-for the confirmed `example-host` topology, initial inferred rollback anchor, exact
-commands, verification, and recovery procedure. Do not use `git pull` plus the
-fresh-install path to upgrade that production host.
+for the deployment workflow, verification, and recovery procedure. SSH targets
+and environment-specific values belong in private operator configuration. Do not
+use `git pull` plus the fresh-install path for production upgrades.
 
 The deployment templates use these public paths:
 
@@ -130,7 +130,7 @@ The Web UI listens on loopback only. Open it through a tunnel:
 ssh -N \
   -L 12790:127.0.0.1:12790 \
   -L 19090:127.0.0.1:19090 \
-  admin@vps.example.com
+  "$SUBCTL_SSH_TARGET"
 ```
 
 Then open:

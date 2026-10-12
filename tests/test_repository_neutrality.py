@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 import ipaddress
 import re
+import shlex
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -17,7 +19,13 @@ HOST_RE = re.compile(
 )
 IPV4_RE = re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])")
 CHROME_VERSION_RE = re.compile(r"(?i)Chrome/[0-9]+(?:\.[0-9]+){3}")
+WINDOWS_ABSOLUTE_PATH_RE = re.compile(
+    r"(?i)(?<![a-z0-9])[a-z]:[\\/]"
+    r"(?:[^\\/\s\"'`]+[\\/])+"
+    r"[^\\/\s\"'`]*"
+)
 URL_RE = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"'<>]+")
+UNIX_USER_HOME_RE = re.compile(r"(?i)(?<![a-z0-9])/(?:users|home)/[a-z0-9._-]+(?:/|$)")
 SAFE_HOST_SUFFIXES = (
     ".example",
     ".example.com",
@@ -31,6 +39,8 @@ SAFE_HOST_SUFFIXES = (
     ".ubuntu.com",
     ".debian.org",
     ".nodejs.org",
+    ".npmjs.org",
+    ".yarnpkg.com",
 )
 SAFE_PUBLIC_HOSTS = {
     "example.com",
@@ -46,45 +56,90 @@ SAFE_PUBLIC_HOSTS = {
     "nodejs.org",
     "metacubex.one",
     "wiki.metacubex.one",
+    "music.example.invalid",
+    "npmjs.org",
+    "yarnpkg.com",
+    "opencollective.com",
+    "tidelift.com",
 }
 SAFE_PUBLIC_IPS = {"192.0.2.1", "192.0.2.1"}
-APPROVED_PROFILE_ENDPOINT_HOSTS = {"music.example.invalid", "public.example.invalid"}
-APPROVED_PROFILE_ENDPOINT_IPS = {"203.0.113.10"}
 TEXT_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".json", ".toml", ".sh", ".jsx", ".html", ".css"}
-SCAN_ROOTS = ("src", "examples", "tests", "docs", "deploy", "scripts", "web/src")
 
 
 def _is_neutral_hostname(value: str) -> bool:
     hostname = value.casefold().rstrip(".")
-    return (
-        hostname in SAFE_PUBLIC_HOSTS
-        or hostname in APPROVED_PROFILE_ENDPOINT_HOSTS
-        or hostname.endswith(SAFE_HOST_SUFFIXES)
-    )
+    return hostname in SAFE_PUBLIC_HOSTS or hostname.endswith(SAFE_HOST_SUFFIXES)
 
 
 def _is_neutral_ip(value: str) -> bool:
     address = ipaddress.ip_address(value)
     shared_range = ipaddress.ip_network("100.64.0.0/10")
-    return (
-        value in SAFE_PUBLIC_IPS
-        or value in APPROVED_PROFILE_ENDPOINT_IPS
-        or address in shared_range
-        or not address.is_global
-    )
+    return value in SAFE_PUBLIC_IPS or address in shared_range or not address.is_global
+
+
+def _is_neutral_ssh_target(value: str) -> bool:
+    target = value.strip("\"'`")
+    if target.startswith("$") or (target.startswith("<") and target.endswith(">")):
+        return True
+    if "@" in target:
+        target = target.rsplit("@", 1)[1]
+    return _is_neutral_hostname(target)
+
 
 
 def _domain_scan_text(path: Path, content: str) -> str:
-    if path.suffix.casefold() != ".py":
-        if path.suffix.casefold() in {".jsx", ".css", ".html"}:
-            return " ".join(URL_RE.findall(content))
-        return content
-    parsed = ast.parse(content)
-    return " ".join(
-        node.value
-        for node in ast.walk(parsed)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    if path.suffix.casefold() == ".py":
+        parsed = ast.parse(content)
+        return " ".join(
+            node.value
+            for node in ast.walk(parsed)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        )
+    if path.suffix.casefold() in {".jsx", ".css", ".html"}:
+        return " ".join(URL_RE.findall(content))
+    return content
+
+
+def _ssh_destinations(content: str) -> list[str]:
+    logical_lines = re.sub(r"\\\r?\n[ \t]*", " ", content)
+    destinations: list[str] = []
+    for match in re.finditer(r"(?m)^[ \t]*ssh[ \t]+([^\r\n]+)", logical_lines):
+        try:
+            arguments = shlex.split(match.group(1))
+        except ValueError:
+            continue
+        index = 0
+        while index < len(arguments):
+            argument = arguments[index]
+            if argument == "--":
+                index += 1
+                if index < len(arguments):
+                    destinations.append(arguments[index])
+                break
+            if not argument.startswith("-"):
+                destinations.append(argument)
+                break
+            option = argument[:2]
+            if len(argument) == 2 and option.lower() in {"-b", "-c", "-d", "-e", "-f", "-i", "-j", "-l", "-m", "-o", "-p", "-q", "-s", "-w"}:
+                index += 2
+            else:
+                index += 1
+    return destinations
+
+
+def _tracked_text_files() -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
     )
+    paths = [Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item]
+    return [
+        REPO_ROOT / path
+        for path in paths
+        if path.suffix.casefold() in TEXT_SUFFIXES and (REPO_ROOT / path).is_file()
+    ]
 
 
 def test_repository_configuration_example_uses_an_empty_hosts_mapping():
@@ -93,27 +148,30 @@ def test_repository_configuration_example_uses_an_empty_hosts_mapping():
     assert config["mihomo"]["hosts"] == {}
 
 
-def test_repository_network_literals_are_placeholders_or_public_dependencies():
-    files = [
-        path
-        for root_name in SCAN_ROOTS
-        for path in (REPO_ROOT / root_name).rglob("*")
-        if path.is_file() and path.suffix.casefold() in TEXT_SUFFIXES
-    ]
-    files.append(REPO_ROOT / "README.md")
-    unneutral_files: set[Path] = set()
-
-    for path in files:
+def test_tracked_repository_network_literals_are_neutral_or_public_dependencies():
+    unsafe_files: set[Path] = set()
+    for path in _tracked_text_files():
         content = path.read_text(encoding="utf-8", errors="replace")
-        domain_text = _domain_scan_text(path, content)
         ip_text = CHROME_VERSION_RE.sub("", content)
-        if any(not _is_neutral_hostname(host) for host in HOST_RE.findall(domain_text)):
-            unneutral_files.add(path)
-        if any(not _is_neutral_ip(address) for address in IPV4_RE.findall(ip_text)):
-            unneutral_files.add(path)
+        domain_text = _domain_scan_text(path, content)
+        unsafe_host = any(
+            not _is_neutral_hostname(host) for host in HOST_RE.findall(domain_text)
+        )
+        unsafe_ip = any(
+            not _is_neutral_ip(address) for address in IPV4_RE.findall(ip_text)
+        )
+        unsafe_path = bool(
+            WINDOWS_ABSOLUTE_PATH_RE.search(content) or UNIX_USER_HOME_RE.search(content)
+        )
+        unsafe_ssh = any(
+            not _is_neutral_ssh_target(target) for target in _ssh_destinations(content)
+        )
+        if unsafe_host or unsafe_ip or unsafe_path or unsafe_ssh:
+            unsafe_files.add(path.relative_to(REPO_ROOT))
 
-    assert not unneutral_files, (
-        "repository text contains network literals outside the placeholder, public dependency, "
-        "or approved profile endpoint allowlists in "
-        f"{len(unneutral_files)} file(s)"
+    assert not unsafe_files, (
+        "tracked text contains a non-neutral hostname/IP, workstation path, "
+        "or concrete SSH target in "
+        f"{len(unsafe_files)} file(s): "
+        f"{', '.join(sorted(map(str, unsafe_files)))}"
     )

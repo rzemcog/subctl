@@ -47,7 +47,7 @@ def fetch(url: str, opener: urllib.request.OpenerDirector | None = None) -> int:
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Keep the health check pinned to the exact configured URL."""
+    """Keep the control endpoint check pinned to the configured URL."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -78,12 +78,12 @@ def check_empty_204(url: str, opener: urllib.request.OpenerDirector | None = Non
             status = response.status
     except urllib.error.HTTPError as exc:
         if 300 <= exc.code < 400:
-            raise SystemExit("health control endpoint redirected") from exc
-        raise SystemExit(f"health control endpoint returned HTTP {exc.code}") from exc
+            raise SystemExit("control endpoint redirected") from exc
+        raise SystemExit(f"control endpoint returned HTTP {exc.code}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise SystemExit("health control endpoint is unreachable") from exc
+        raise SystemExit("control endpoint is unreachable") from exc
     if status != 204 or body:
-        raise SystemExit(f"health control endpoint returned HTTP {status} or a response body")
+        raise SystemExit(f"control endpoint returned HTTP {status} or a response body")
 
 
 def main() -> None:
@@ -106,8 +106,8 @@ def main() -> None:
         checks.extend(((f"{name}:yaml", f"{base_url}/s/{token}.yaml"), (f"{name}:raw", f"{base_url}/s/{token}.raw")))
     for _, url in checks:
         fetch(url, opener)
-    if os.environ.get("SUBCTL_SMOKE_CHECK_health_CONTROL", "1") == "1":
-        check_empty_204(f"{base_url}/.well-known/health-control/204", opener)
+    if os.environ.get("SUBCTL_SMOKE_CHECK_CONTROL_ENDPOINT", "1") == "1":
+        check_empty_204(f"{base_url}/.well-known/subctl-control/204", opener)
     print(f"public subscription smoke: passed ({len(checks)} endpoints)")
 
 

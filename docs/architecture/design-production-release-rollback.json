@@ -5,21 +5,21 @@
   "derived_from": "intent-production-release-rollback",
   "requirements_ledger": {
     "fixed": [
-      "Production source checkout is $SUBCTL_SOURCE_DIR and the installed runtime is /opt/subctl/venv; /opt/subctl is not a Git checkout.",
+      "The source checkout is operator-selected and separate from the installed application runtime.",
       "Each release binds a Git commit to an immutable installable package and SHA256.",
-      "The first rollback anchor is built from 780fe63 as the nearest reproducible baseline; its historical relation to the live process is inferred, not proven.",
+      "Build the initial rollback anchor from a selected full Git commit and record its historical relation to the running service as inferred.",
       "Rollback restores the application package, all three subctl systemd unit files, and the matching Caddy configuration.",
       "Deployment explicitly restarts subctl-web.service and verifies production health, refresh/render, publication paths, and provenance.",
       "Protected config, user registry, and generated state remain outside package installation and release rollback.",
-      "Subctl project changes are committed and pushed; agent-context changes are committed separately after production verification."
+      "Commit public source changes separately from operator-managed context stored outside this repository."
     ],
     "preferences": [
       "Prefer a wheel as the application artifact.",
       "Use a repository-level helper that orchestrates the existing installer rather than duplicating its installation logic.",
-      "Prefer the production source checkout to match the active release when that does not undermine safe future operations."
+      "Prefer the current source checkout to track the release-control branch when that does not undermine safe operations."
     ],
     "assumptions": [
-      "Production deployment runs as root through the documented ssh example-host alias.",
+      "Production deployment runs with the required privilege on an operator-selected host; configure SSH access locally.",
       "The production domain is read from protected config.yaml at deployment time and must match the active Caddyfile.",
       "The source commit has been pushed to origin/main before deployment; the remote checkout fetches main before the release helper verifies reachability.",
       "The app wheel and its resolved runtime dependency wheels can be built on the production host using its supported Python 3.12 and Node/npm toolchain.",
@@ -63,9 +63,9 @@
     "manifest": "An immutable JSON sidecar records release ID, full Git commit SHA, application wheel filename and SHA256, wheelhouse file hashes, systemd/Caddy hashes, build UTC timestamp, build runtime versions, and source provenance. Bootstrap metadata sets historical_runtime_relation=inferred and states that the actual in-memory process revision was not proven. Successful deploy/rollback timestamps are immutable event records outside the release bundle.",
     "artifact_mutability": "The builder creates a private staging directory, verifies all hashes, applies root ownership and read-only modes, then atomically renames it into the release store. Existing release IDs are never replaced.",
     "build_source": "The helper requires a clean Git checkout and a commit reachable from origin/main, exports only tracked files from that exact commit to temporary staging, runs npm ci and npm run build there, then builds the subctl wheel plus its resolved runtime dependency wheelhouse. It does not build from or modify the mutable source working tree.",
-    "initial_anchor": "Bootstrap commit 780fe63 into the release store without installing it. Capture the currently active systemd unit files and rendered Caddyfile, verify them against that commit's tracked assets, and record source provenance as inferred. Preserve the original service process until the target deployment begins.",
+    "initial_anchor": "Bootstrap the selected full commit into the release store without installing it. Capture the currently active systemd unit files and rendered Caddyfile, verify them against that commit's tracked assets, and record source provenance as inferred. Preserve the original service process until the target deployment begins.",
     "active_record": "Write current.json atomically only after all target verification succeeds. It names the release ID, commit, package filename/hash, and actual successful deployment time. Before the first successful deployment there is no current.json; the explicitly supplied bootstrap release is the fallback.",
-    "source_checkout_policy": "Keep $SUBCTL_SOURCE_DIR on the current control-plane/main commit when rolling back, because the accepted 780fe63 baseline predates the release helper. release status reports source checkout HEAD separately from current.json so Git HEAD is never mistaken for the deployed revision.",
+    "source_checkout_policy": "Keep the source checkout on the current release-control branch during rollback. Release status reports source checkout HEAD separately from current.json so Git HEAD is never mistaken for the deployed revision.",
     "serialization": "Use one root-owned deployment lock. Abort before service changes if another refresh is active, a release is invalid, the source tree is dirty, or required production files are missing.",
     "installation": "The release helper invokes deploy/install.sh in an explicit release-dir mode. That mode verifies the bundle, installs the exact app wheel and dependency wheelhouse with pip --no-index, installs the bundle's systemd snapshots, validates a staged Caddyfile before atomic replacement, runs systemd daemon-reload, and does not run npm, upgrade pip, create/replace protected state, or rely on enable --now to restart the web service.",
     "deployment_sequence": [
@@ -92,20 +92,20 @@
     {
       "id": "D2",
       "choice": "Build from git archive of the exact pushed commit in temporary staging.",
-      "rejected": "Running npm and pip directly against $SUBCTL_SOURCE_DIR and installing from its mutable checkout.",
+      "rejected": "Running npm and pip directly against ${SUBCTL_SOURCE_DIR} and installing from its mutable checkout.",
       "reason": "The release helper must not alter or package uncommitted source files."
     },
     {
       "id": "D3",
       "choice": "Keep the source checkout on the current release-control commit during rollback and use current.json as the authoritative active-release record.",
-      "rejected": "Switching $SUBCTL_SOURCE_DIR to the old rollback commit.",
-      "reason": "The 780fe63 baseline predates the release helper; keeping current control-plane code preserves the safe deploy/rollback command while status reports the active runtime commit separately."
+      "rejected": "Switching ${SUBCTL_SOURCE_DIR} to the old rollback commit.",
+      "reason": "Keeping current control-plane code preserves the deploy/rollback command while status reports the active runtime commit separately."
     },
     {
       "id": "D4",
-      "choice": "Bootstrap 780fe63 with historical runtime relation=inferred and capture the exact current infrastructure files.",
-      "rejected": "Claiming the package is a proven reproduction of code already loaded in the Sep 28 service process.",
-      "reason": "The process start precedes the commit by six minutes and no saved artifact proves the loaded source tree; the user selected the nearest reproducible commit and required the uncertainty to remain explicit."
+      "choice": "Bootstrap the selected full commit with historical runtime relation=inferred and capture the exact current infrastructure files.",
+      "rejected": "Claiming the package proves the exact code previously loaded by a running service.",
+      "reason": "No retained artifact proves the exact source revision loaded by the previous process; record the selected baseline relation as inferred."
     },
     {
       "id": "D5",
@@ -129,7 +129,7 @@
     },
     {
       "path": "docs/deployment.md",
-      "purpose": "Replace the generic /opt/subctl checkout upgrade with the exact example-host topology, first-anchor inference, deploy/status/rollback commands, artifact layout, state boundaries, and verification."
+      "purpose": "Describe the reusable deployment workflow, inferred rollback anchor, artifact layout, state boundaries, and verification."
     },
     {
       "path": "README.md",
@@ -140,8 +140,8 @@
       "purpose": "Preserve the accepted requirements and traceable design decisions."
     },
     {
-      "path": "local-user-path",
-      "purpose": "After verified production deployment, point future agents to the project-owned release workflow and record confirmed paths, release store, restart, and verification rules. Commit these separately from subctl."
+      "path": "$PRIVATE_AGENT_CONTEXT_PATH",
+      "purpose": "Keep operator-specific context outside this public repository and link it to the reusable release workflow when needed."
     }
   ],
   "modules": [
@@ -181,7 +181,7 @@
       "name": "Release lifecycle CLI",
       "owner": "Release lifecycle CLI",
       "operations": [
-        "bootstrap an inferred 780fe63 recovery anchor without installing it",
+        "bootstrap an inferred rollback anchor from a selected full commit without installing it",
         "deploy a clean pushed commit from its immutable release bundle",
         "rollback to a named verified release without rebuilding it",
         "report active release and source checkout as separate revisions"
@@ -272,7 +272,7 @@
       "transitions": [
         {
           "from": "UNINITIALIZED",
-          "event": "bootstrap verified 780fe63 bundle and live infrastructure snapshot",
+          "event": "bootstrap verified the selected full commit bundle and live infrastructure snapshot",
           "to": "ANCHOR_STORED",
           "guard": "The source commit exists, the tree is clean, package and infra hashes verify, and provenance is explicitly inferred.",
           "action": "Store the root-owned rollback anchor without installing it or changing services."
@@ -373,41 +373,69 @@
     },
     {
       "failure": "The user requests the historical first release revision.",
-      "response": "Report 780fe63 as an inferred nearest reproducible baseline and never claim that it proves the exact code previously loaded in process memory."
+      "response": "Report the selected full commit as an inferred baseline and never claim that it proves the exact code previously loaded in process memory."
     }
   ],
   "traceability": [
     {
       "intent_ref": "I1",
-      "design_refs": ["Immutable release store", "Release lifecycle CLI", "Immutable release store"]
+      "design_refs": [
+        "Immutable release store",
+        "Release lifecycle CLI",
+        "Immutable release store"
+      ]
     },
     {
       "intent_ref": "I2",
-      "design_refs": ["Git archive builder", "Release lifecycle CLI"]
+      "design_refs": [
+        "Git archive builder",
+        "Release lifecycle CLI"
+      ]
     },
     {
       "intent_ref": "I3",
-      "design_refs": ["Immutable release store", "Release lifecycle CLI"]
+      "design_refs": [
+        "Immutable release store",
+        "Release lifecycle CLI"
+      ]
     },
     {
       "intent_ref": "I4",
-      "design_refs": ["Shared installer adapter", "Production verifier", "Production release lifecycle"]
+      "design_refs": [
+        "Shared installer adapter",
+        "Production verifier",
+        "Production release lifecycle"
+      ]
     },
     {
       "intent_ref": "I5",
-      "design_refs": ["Shared installer adapter", "selected_architecture"]
+      "design_refs": [
+        "Shared installer adapter",
+        "selected_architecture"
+      ]
     },
     {
       "intent_ref": "I6",
-      "design_refs": ["Immutable release store", "Production verifier", "Production release lifecycle"]
+      "design_refs": [
+        "Immutable release store",
+        "Production verifier",
+        "Production release lifecycle"
+      ]
     },
     {
       "intent_ref": "I7",
-      "design_refs": ["Release lifecycle CLI", "selected_architecture"]
+      "design_refs": [
+        "Release lifecycle CLI",
+        "selected_architecture"
+      ]
     },
     {
       "intent_ref": "I8",
-      "design_refs": ["Immutable release store", "Git archive builder", "D4"]
+      "design_refs": [
+        "Immutable release store",
+        "Git archive builder",
+        "D4"
+      ]
     }
   ],
   "implementation_plan": [
@@ -416,8 +444,8 @@
     "Add the promotion lifecycle that serializes deployments, pauses services, applies a bundle, verifies it, writes active metadata, and restores a fallback on failure.",
     "Update docs/deployment.md and README.md with topology, inferred bootstrap history, configuration/state boundaries, exact deploy/status/rollback commands, and verification.",
     "Run the full backend suite and frontend build on a compatible Linux/Python environment; run diff checks; commit and push intended subctl changes.",
-    "On example-host, verify clean source and pushed commit, create the 780fe63 inferred rollback anchor, then deploy the pushed target commit using the helper.",
-    "After successful production verification, update only example-host.md and proxy-diagnostics/SKILL.md in the existing agent-context repository and make a separate targeted commit."
+    "On the operator-selected host, verify the clean pushed source, create an inferred anchor from a matching full commit, and deploy with the helper.",
+    "Keep any operator-specific runbook updates in private context outside this public repository."
   ],
   "verification_plan": [
     {
@@ -443,10 +471,10 @@
   ],
   "definition_of_done": [
     "One documented official production deploy and rollback workflow exists and uses the exact Git commit plus immutable package.",
-    "The Release N anchor is built from 780fe63, records the wheel SHA256 and exact matching infra snapshots, and labels historical runtime relation as inferred.",
+    "The Release N anchor is built from the selected full commit, records the wheel SHA256 and exact matching infra snapshots, and labels historical runtime relation as inferred.",
     "The target pushed commit is installed from its retained package, with matching dependencies/systemd/Caddy, explicit web restart, and successful production verification.",
     "The rollback helper accepts a saved release ID, verifies hashes, and installs the retained artifacts without rebuilding old source.",
-    "Project changes are committed and pushed; agent-context changes are committed separately after verification; unrelated agent-context changes remain unstaged and uncommitted."
+    "Public project changes are committed and pushed; private operator-context updates remain in their own repository."
   ],
   "open_questions": []
 }

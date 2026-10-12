@@ -84,12 +84,12 @@ def test_smoke_control_endpoint_requires_empty_204():
 
     class FakeOpener:
         def open(self, request, timeout):
-            assert request.full_url == "https://subscriptions.example/.well-known/health-control/204"
+            assert request.full_url == "https://subscriptions.example/.well-known/subctl-control/204"
             assert timeout == 15
             return FakeResponse()
 
     smoke.check_empty_204(
-        "https://subscriptions.example/.well-known/health-control/204",
+        "https://subscriptions.example/.well-known/subctl-control/204",
         FakeOpener(),
     )
 
@@ -129,7 +129,7 @@ def test_smoke_control_endpoint_reports_redirect_response():
 
     with pytest.raises(SystemExit, match="control endpoint redirected"):
         smoke.check_empty_204(
-            "https://subscriptions.example/.well-known/health-control/204",
+            "https://subscriptions.example/.well-known/subctl-control/204",
             RedirectingOpener(),
         )
 
@@ -146,7 +146,7 @@ def test_smoke_can_skip_new_control_route_during_fallback(monkeypatch, tmp_path)
     monkeypatch.setenv("SUBCTL_CONFIG", str(config_path))
     monkeypatch.setenv("SUBCTL_USERS", str(users_path))
     monkeypatch.delenv("SUBCTL_SMOKE_CONNECT_IP", raising=False)
-    monkeypatch.setenv("SUBCTL_SMOKE_CHECK_health_CONTROL", "0")
+    monkeypatch.setenv("SUBCTL_SMOKE_CHECK_CONTROL_ENDPOINT", "0")
     requests = []
     monkeypatch.setattr(smoke, "fetch", lambda url, opener=None: requests.append(url))
     monkeypatch.setattr(
@@ -186,11 +186,11 @@ def test_smoke_base_url_scheme_is_checked_before_requests(monkeypatch, tmp_path,
             smoke.main()
         assert requests == []
     else:
-        # An empty registry still schedules the independent health control check.
+        # An empty registry still schedules the independent control endpoint check.
         smoke.main()
         assert requests == [
             ("fetch", "https://subscriptions.example/feeds/provider/synthetic-token"),
-            ("control", "https://subscriptions.example/.well-known/health-control/204"),
+            ("control", "https://subscriptions.example/.well-known/subctl-control/204"),
         ]
 
 
@@ -207,7 +207,7 @@ def test_runtime_verifier_pins_public_smoke_to_loopback(monkeypatch, tmp_path):
 
     assert result == package_info
     assert calls[-1][1]["SUBCTL_SMOKE_CONNECT_IP"] == "127.0.0.1"
-    assert calls[-1][1]["SUBCTL_SMOKE_CHECK_health_CONTROL"] == "1"
+    assert calls[-1][1]["SUBCTL_SMOKE_CHECK_CONTROL_ENDPOINT"] == "1"
 
 
 def test_runtime_verifier_can_skip_new_control_route_for_fallback_smoke(monkeypatch, tmp_path):
@@ -222,11 +222,11 @@ def test_runtime_verifier_can_skip_new_control_route_for_fallback_smoke(monkeypa
         tmp_path,
         {},
         include_smoke=True,
-        include_health_control=False,
+        include_control_endpoint=False,
     )
 
     assert calls[-1]["SUBCTL_SMOKE_CONNECT_IP"] == "127.0.0.1"
-    assert calls[-1]["SUBCTL_SMOKE_CHECK_health_CONTROL"] == "0"
+    assert calls[-1]["SUBCTL_SMOKE_CHECK_CONTROL_ENDPOINT"] == "0"
 
 
 def test_restore_fallback_does_not_require_new_control_route(monkeypatch, tmp_path):
@@ -244,7 +244,7 @@ def test_restore_fallback_does_not_require_new_control_route(monkeypatch, tmp_pa
 
     release._restore_fallback(tmp_path / "fallback", {}, tmp_path / "releases", "failed-release")
 
-    assert verification_calls == [{"include_smoke": True, "include_health_control": False}]
+    assert verification_calls == [{"include_smoke": True, "include_control_endpoint": False}]
 
 
 def test_http_health_retries_transient_startup_failure(monkeypatch):
@@ -353,6 +353,27 @@ def test_bundle_binds_commit_to_immutable_artifact_and_hashes(tmp_path):
     assert release.release_id_for("a" * 40, manifest["bundle_sha256"]) == bundle.name
     assert (bundle / "package" / manifest["application"]["filename"]).is_file()
     assert not (bundle / "package" / manifest["application"]["filename"]).stat().st_mode & 0o222
+
+
+def test_inferred_rollback_anchor_accepts_any_full_commit_sha(tmp_path, monkeypatch):
+    release_root = tmp_path / "releases"
+    release_root.mkdir()
+    commit = "a" * 40
+    anchor = {
+        "release_id": "selected-release",
+        "git_commit": commit,
+        "historical_runtime_relation": "inferred",
+    }
+    (release_root / "anchor.json").write_text(json.dumps(anchor), encoding="utf-8")
+    bundle = release_root / "selected-release"
+    manifest = {"git_commit": commit, "historical_runtime_relation": "inferred"}
+    monkeypatch.setattr(release, "_load_release", lambda release_id, root: (bundle, manifest))
+
+    loaded_anchor, anchor_bundle, loaded_manifest = release._load_anchor(release_root)
+
+    assert loaded_anchor == anchor
+    assert anchor_bundle == bundle
+    assert loaded_manifest == manifest
 
 
 def test_repeating_identical_publish_reuses_existing_bundle(tmp_path):

@@ -267,9 +267,9 @@ def test_render_user_defaults_tun_hosts_and_geodata(profile_config, users_path):
         "stack": "mips",
         "auto-route": True,
         "mtu": 1350,
-        "route-exclude-address": ["203.0.113.10/32"],
+        "route-exclude-address": [],
     }
-    assert profile["hosts"] == {"public.example.invalid": "203.0.113.10"}
+    assert profile["hosts"] == {}
     assert profile["geodata-mode"] is False
     assert profile["geo-auto-update"] is True
     assert profile["geo-update-interval"] == 24
@@ -284,17 +284,34 @@ def test_render_user_defaults_tun_hosts_and_geodata(profile_config, users_path):
 def test_render_includes_protected_mihomo_hosts_mapping(
     config_data, write_yaml, users_path, provider_state_dir
 ):
-    mapping = {"feed.fixture.test": "192.0.2.71"}
+    config_data["public"]["base_url"] = "https://feed.fixture.test"
+    mapping = {"feed.fixture.test": "192.0.2.10", "other.fixture.test": "198.51.100.20"}
     config_data["mihomo"] = {"hosts": mapping}
     config = load_config(
         write_yaml("mihomo-host-map.yaml", config_data), state_dir=provider_state_dir
     )
     user = load_users(users_path).users["alice"]
 
-    assert build_mihomo_profile(config, user)["hosts"] == {
-        "public.example.invalid": "203.0.113.10",
-        **mapping,
-    }
+    profile = build_mihomo_profile(config, user)
+
+    assert profile["hosts"] == mapping
+    assert profile["tun"]["route-exclude-address"] == ["192.0.2.10/32"]
+
+
+def test_render_excludes_ip_literal_public_endpoint_from_tun(
+    config_data, write_yaml, users_path, provider_state_dir
+):
+    config_data["public"]["base_url"] = "https://[2001:db8::10]"
+    config_data["mihomo"] = {"hosts": {"other.fixture.test": "192.0.2.12"}}
+    config = load_config(
+        write_yaml("mihomo-ip-endpoint.yaml", config_data), state_dir=provider_state_dir
+    )
+    user = load_users(users_path).users["alice"]
+
+    profile = build_mihomo_profile(config, user)
+
+    assert profile["hosts"] == {"other.fixture.test": "192.0.2.12"}
+    assert profile["tun"]["route-exclude-address"] == ["2001:db8::10/128"]
 
 
 def test_render_legacy_provider_download_proxy_does_not_override_fetch_routes(

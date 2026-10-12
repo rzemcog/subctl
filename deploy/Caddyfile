@@ -38,11 +38,11 @@ http://{$SUBCTL_DOMAIN} {
 }
 
 {$SUBCTL_DOMAIN} {
-	@health_control {
-		path /.well-known/health-control/204
+		@control_endpoint {
+			path /.well-known/subctl-control/204
 		protocol https
 	}
-	handle @health_control {
+		handle @control_endpoint {
 		respond 204
 	}
 	handle {

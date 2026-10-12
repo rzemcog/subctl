@@ -40,7 +40,6 @@ TUN_ROUTE_EXCLUDE_ADDRESSES = (
     "fe80::/10",
 )
 RU_NODE_NAME_KEYWORDS = ("Preferred", "Sample")
-USER_DEFAULT_HOSTS = {"public.example.invalid": "203.0.113.10"}
 GEOX_URLS = {
     "geoip": "https://geo.example.invalid/geoip-lite.dat",
     "geosite": "https://geo.example.invalid/geosite.dat",
@@ -122,6 +121,26 @@ def build_mihomo_profile(config: AppConfig, user: User) -> dict:
     return _build_user_profile(config, user)[0]
 
 
+def _public_endpoint_tun_excludes(config: AppConfig) -> list[str]:
+    hostname = urlsplit(config.public.base_url).hostname
+    if not hostname:
+        return []
+
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        mapping = {
+            host.casefold(): value for host, value in config.mihomo.hosts.items()
+        }
+        mapped_address = mapping.get(hostname.casefold())
+        if mapped_address is None:
+            return []
+        address = ipaddress.ip_address(mapped_address)
+
+    prefix = 32 if address.version == 4 else 128
+    return [str(ipaddress.ip_network(f"{address}/{prefix}", strict=False))]
+
+
 def _build_user_profile(
     config: AppConfig, user: User
 ) -> tuple[dict, ProviderSeedSnapshot | None]:
@@ -144,9 +163,9 @@ def _build_user_profile(
         "stack": "mips",
         "auto-route": True,
         "mtu": 1350,
-        "route-exclude-address": ["203.0.113.10/32"],
+        "route-exclude-address": _public_endpoint_tun_excludes(config),
     }
-    profile["hosts"] = {**USER_DEFAULT_HOSTS, **dict(config.mihomo.hosts)}
+    profile["hosts"] = dict(config.mihomo.hosts)
     return profile, seed_snapshot
 
 
