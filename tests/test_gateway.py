@@ -13,6 +13,7 @@ from conftest import (
     SEED_URI,
     VALID_ALICE_TOKEN,
     VALID_PROVIDER_TOKEN,
+    WS_SEED_URI,
     assert_secret_not_printed,
 )
 from subctl.config import load_config
@@ -127,6 +128,26 @@ def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
     assert groups["PROVIDER-AUTO-SEED"]["tolerance"] == 50
     assert groups["BASE"]["proxies"] == ["PROXY", "DIRECT"]
     assert profile["rules"][-1] == "MATCH,BASE"
+
+
+def test_gateway_and_user_profiles_render_vless_websocket_seed(
+    gateway_config_path, users_path, provider_state_dir
+):
+    cache = provider_state_dir / "cache" / "provider.decoded"
+    cache.write_text(WS_SEED_URI + "\n", encoding="utf-8")
+    config = load_config(gateway_config_path, state_dir=provider_state_dir)
+    gateway_profile = build_gateway_profile(config)
+    user_profile = yaml.safe_load(
+        render_user_yaml(config, load_users(users_path).users["alice"])
+    )
+
+    for profile in (gateway_profile, user_profile):
+        seed_node = profile["proxy-providers"]["provider-seed"]["payload"][0]
+        assert seed_node["network"] == "ws"
+        assert seed_node["ws-opts"] == {
+            "path": "/ws",
+            "headers": {"Host": "cdn.example.net"},
+        }
 
 
 def test_gateway_uses_canonical_fetch_routes_with_legacy_download_override(

@@ -17,6 +17,11 @@ SEED_URI = (
     "&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&security=reality&sid=0123456789abcdef"
     "&sni=seed.example.net&type=tcp#fixture-seed"
 )
+WS_SEED_URI = (
+    "vless://123e4567-e89b-12d3-a456-426614174000@edge.example.net:443"
+    "?encryption=none&security=tls&sni=edge.example.net&type=ws"
+    "&host=cdn.example.net&path=%2Fws#fixture-websocket"
+)
 
 
 @pytest.fixture

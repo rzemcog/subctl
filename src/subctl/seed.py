@@ -108,10 +108,21 @@ def _vless_proxy(uri: str, index: int) -> dict[str, Any]:
             "sid",
             "sni",
             "type",
+            "host",
+            "path",
         }
         if set(params) - supported_keys:
             raise ValueError
-        if params.get("type", "tcp").lower() != "tcp":
+        network = params.get("type", "tcp").lower()
+        if network not in {"tcp", "ws"}:
+            raise ValueError
+        if network == "tcp" and ({"host", "path"} & set(params)):
+            raise ValueError
+        if any(
+            ord(character) < 0x20 or ord(character) == 0x7F
+            for key in ("host", "path")
+            for character in params.get(key, "")
+        ):
             raise ValueError
         if params.get("headerType", "none").lower() != "none":
             raise ValueError
@@ -133,9 +144,17 @@ def _vless_proxy(uri: str, index: int) -> dict[str, Any]:
             "server": server,
             "port": port,
             "uuid": uuid,
-            "network": "tcp",
+            "network": network,
             "encryption": "",
         }
+        if network == "ws":
+            ws_options: dict[str, Any] = {}
+            if "path" in params:
+                ws_options["path"] = params["path"]
+            if "host" in params:
+                ws_options["headers"] = {"Host": params["host"]}
+            if ws_options:
+                proxy["ws-opts"] = ws_options
         if params.get("flow"):
             proxy["flow"] = params["flow"]
         if security in {"tls", "reality"}:

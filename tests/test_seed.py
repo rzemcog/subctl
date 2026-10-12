@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import SEED_URI
+from conftest import SEED_URI, WS_SEED_URI
 from subctl.errors import ValidationError
 from subctl.seed import load_provider_seed
 
@@ -34,6 +34,45 @@ def test_load_provider_seed_converts_reality_vless_and_tracks_snapshot(tmp_path)
     assert seed.generated_at.endswith("+00:00")
     assert seed.source_updated_at is not None
     assert seed.source_updated_at.endswith("+00:00")
+
+
+def test_load_provider_seed_converts_vless_websocket_transport(tmp_path):
+    cache = tmp_path / "provider.decoded"
+    cache.write_text(WS_SEED_URI + "\n", encoding="utf-8")
+
+    seed = load_provider_seed(cache)
+
+    assert seed.proxies == (
+        {
+            "name": "fixture-websocket",
+            "type": "vless",
+            "server": "edge.example.net",
+            "port": 443,
+            "uuid": "123e4567-e89b-12d3-a456-426614174000",
+            "network": "ws",
+            "encryption": "",
+            "tls": True,
+            "servername": "edge.example.net",
+            "ws-opts": {
+                "path": "/ws",
+                "headers": {"Host": "cdn.example.net"},
+            },
+        },
+    )
+
+
+@pytest.mark.parametrize("transport_option", ["host=cdn.example.net", "path=%2Fws"])
+def test_load_provider_seed_rejects_websocket_options_on_tcp(
+    tmp_path, transport_option
+):
+    cache = tmp_path / "provider.decoded"
+    cache.write_text(
+        SEED_URI.replace("type=tcp", f"type=tcp&{transport_option}") + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="cannot be represented in SEED"):
+        load_provider_seed(cache)
 
 
 def test_load_provider_seed_applies_name_exclusions_and_unique_names(tmp_path):
