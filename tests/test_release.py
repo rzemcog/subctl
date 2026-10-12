@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,46 @@ def test_smoke_control_endpoint_requires_empty_204():
         "https://subscriptions.example/.well-known/health-control/204",
         FakeOpener(),
     )
+
+
+def test_smoke_control_endpoint_rejects_redirects_without_following_them():
+    handler = smoke.NoRedirectHandler()
+    request = urllib.request.Request("https://subscriptions.example/control")
+
+    assert handler.redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        {},
+        "https://other.example/204",
+    ) is None
+    control_opener = smoke._without_redirects(urllib.request.build_opener())
+    redirect_handlers = [
+        item
+        for item in control_opener.handlers
+        if isinstance(item, urllib.request.HTTPRedirectHandler)
+    ]
+    assert len(redirect_handlers) == 1
+    assert isinstance(redirect_handlers[0], smoke.NoRedirectHandler)
+
+
+def test_smoke_control_endpoint_reports_redirect_response():
+    class RedirectingOpener:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                302,
+                "Found",
+                {"Location": "https://other.example/204"},
+                None,
+            )
+
+    with pytest.raises(SystemExit, match="control endpoint redirected"):
+        smoke.check_empty_204(
+            "https://subscriptions.example/.well-known/health-control/204",
+            RedirectingOpener(),
+        )
 
 
 def test_smoke_can_skip_new_control_route_during_fallback(monkeypatch, tmp_path):

@@ -46,16 +46,40 @@ def fetch(url: str, opener: urllib.request.OpenerDirector | None = None) -> int:
     return len(body)
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep the health check pinned to the exact configured URL."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _without_redirects(opener: urllib.request.OpenerDirector | None) -> urllib.request.OpenerDirector:
+    if opener is None:
+        return urllib.request.build_opener(NoRedirectHandler())
+    if not isinstance(opener, urllib.request.OpenerDirector):
+        return opener
+    handlers = [
+        handler
+        for handler in opener.handlers
+        if not isinstance(handler, urllib.request.HTTPRedirectHandler)
+    ]
+    return urllib.request.build_opener(NoRedirectHandler(), *handlers)
+
+
 def check_empty_204(url: str, opener: urllib.request.OpenerDirector | None = None) -> None:
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "subctl-smoke/1"},
     )
     try:
-        open_url = opener.open if opener is not None else urllib.request.urlopen
+        open_url = _without_redirects(opener).open
         with open_url(request, timeout=15) as response:
             body = response.read()
             status = response.status
+    except urllib.error.HTTPError as exc:
+        if 300 <= exc.code < 400:
+            raise SystemExit("health control endpoint redirected") from exc
+        raise SystemExit(f"health control endpoint returned HTTP {exc.code}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise SystemExit("health control endpoint is unreachable") from exc
     if status != 204 or body:
