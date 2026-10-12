@@ -41,6 +41,7 @@ def gateway_config_data(config_data, tmp_path):
         "base_default": "PROXY",
         "physical_interface": "eth-test0",
         "external_ui_path": "/var/lib/mihomo/ui/current",
+        "dns_nameservers": ["192.0.2.53", "198.51.100.53"],
     }
     return config_data
 
@@ -215,10 +216,10 @@ def test_gateway_profile_has_loopback_listeners_secret_and_disabled_tun(
         "enable": True,
         "ipv6": False,
         "enhanced-mode": "redir-host",
-        "default-nameserver": ["192.0.2.1", "192.0.2.1"],
-        "nameserver": ["192.0.2.1", "192.0.2.1"],
-        "proxy-server-nameserver": ["192.0.2.1", "192.0.2.1"],
-        "direct-nameserver": ["192.0.2.1", "192.0.2.1"],
+        "default-nameserver": ["192.0.2.53", "198.51.100.53"],
+        "nameserver": ["192.0.2.53", "198.51.100.53"],
+        "proxy-server-nameserver": ["192.0.2.53", "198.51.100.53"],
+        "direct-nameserver": ["192.0.2.53", "198.51.100.53"],
         "direct-nameserver-follow-policy": False,
     }
 
@@ -464,6 +465,8 @@ def test_render_gateway_rejects_public_output(gateway_config_path, tmp_path):
         ("controller_port", 65536, "between 1 and 65535"),
         ("base_default", "AUTO", "DIRECT or PROXY"),
         ("physical_interface", "bad interface name", "valid interface name"),
+        ("dns_nameservers", [], "at least one IP address"),
+        ("dns_nameservers", ["resolver.example.test"], "IP address strings"),
     ],
 )
 def test_gateway_config_validation(

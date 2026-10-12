@@ -67,7 +67,21 @@ def config_data(tmp_path):
             "base_url": "https://sub.example.com",
             "output_dir": str(tmp_path / "public"),
         },
-        "mihomo": {"hosts": {}},
+        "mihomo": {
+            "hosts": {},
+            "geox_urls": {
+                "geoip": "https://geo.example.invalid/geoip.dat",
+                "geosite": "https://geo.example.invalid/geosite.dat",
+                "mmdb": "https://geo.example.invalid/geoip.mmdb",
+                "asn": "https://geo.example.invalid/asn.mmdb",
+            },
+            "routing": {
+                "direct_node_name_keywords": ["Preferred", "Sample"],
+                "direct_rules": [
+                    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+                ],
+            },
+        },
         "render": {
             "profile_update_interval_seconds": 3600,
             "provider_update_interval_seconds": 900,
@@ -77,7 +91,7 @@ def config_data(tmp_path):
             "healthcheck_max_failed_times": 2,
             "healthcheck_tolerance_milliseconds": 50,
             "healthcheck_lazy": True,
-            "provider_exclude_keywords": ["Excluded", "SampleRegion"],
+            "provider_exclude_keywords": ["Excluded"],
         },
     }
 

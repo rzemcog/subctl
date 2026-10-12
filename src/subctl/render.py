@@ -39,23 +39,6 @@ TUN_ROUTE_EXCLUDE_ADDRESSES = (
     "fc00::/7",
     "fe80::/10",
 )
-RU_NODE_NAME_KEYWORDS = ("Preferred", "Sample")
-GEOX_URLS = {
-    "geoip": "https://geo.example.invalid/geoip-lite.dat",
-    "geosite": "https://geo.example.invalid/geosite.dat",
-    "mmdb": "https://geo.example.invalid/geoip.metadb",
-    "asn": "https://geo.example.invalid/asn.mmdb",
-}
-RU_DIRECT_RULES = (
-    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
-    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
-    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
-    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
-    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
-    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
-    "GEOIP,ZZ,DIRECT-NODES",
-)
-
 RenderMode = str
 FetchSubscription = Callable[[str, float], bytes]
 
@@ -339,16 +322,15 @@ def _build_common_proxy_policy(
         "timeout": config.render.healthcheck_timeout_milliseconds,
         "lazy": config.render.healthcheck_lazy,
     }
+    direct_keywords = config.mihomo.routing.direct_node_name_keywords
+    direct_node_filter = _provider_exclude_filter(direct_keywords)
     live_exclude_filter = _provider_exclude_filter(
-        _unique_keywords(
-            (*config.render.provider_exclude_keywords, *RU_NODE_NAME_KEYWORDS)
-        )
+        _unique_keywords((*config.render.provider_exclude_keywords, *direct_keywords))
     )
-    ru_node_filter = _provider_exclude_filter(RU_NODE_NAME_KEYWORDS)
     manually_excluded_keywords = tuple(
         keyword
         for keyword in config.render.provider_exclude_keywords
-        if keyword.casefold() not in {value.casefold() for value in RU_NODE_NAME_KEYWORDS}
+        if keyword.casefold() not in {value.casefold() for value in direct_keywords}
     )
     providers: dict[str, dict] = {}
     groups: list[dict] = []
@@ -428,13 +410,13 @@ def _build_common_proxy_policy(
                 "max-failed-times": config.render.healthcheck_max_failed_times,
                 "tolerance": config.render.healthcheck_tolerance_milliseconds,
                 "lazy": config.render.healthcheck_lazy,
-                "exclude-filter": ru_node_filter,
+                **({"exclude-filter": direct_node_filter} if direct_node_filter else {}),
             },
             {
                 "name": "DIRECT-PROXY",
                 "type": "select",
                 "use": ["provider"],
-                "filter": ru_node_filter,
+                "filter": direct_node_filter or "a^",
                 "empty-fallback": "REJECT",
             },
             {
@@ -442,7 +424,7 @@ def _build_common_proxy_policy(
                 "type": "select",
                 "use": ["provider"],
                 "filter": _provider_name_filter(manually_excluded_keywords),
-                "exclude-filter": ru_node_filter,
+                **({"exclude-filter": direct_node_filter} if direct_node_filter else {}),
                 "empty-fallback": "REJECT",
             },
             {
@@ -552,7 +534,7 @@ def _build_common_proxy_policy(
             "geodata-mode": False,
             "geo-auto-update": True,
             "geo-update-interval": 24,
-            "geox-url": dict(GEOX_URLS),
+            **({"geox-url": dict(config.mihomo.geox_urls)} if config.mihomo.geox_urls else {}),
             "proxy-providers": providers,
             "proxy-groups": groups,
             "rules": [
@@ -565,7 +547,7 @@ def _build_common_proxy_policy(
                 "IP-CIDR,::1/128,DIRECT,no-resolve",
                 "IP-CIDR,fc00::/7,DIRECT,no-resolve",
                 "IP-CIDR,fe80::/10,DIRECT,no-resolve",
-                *RU_DIRECT_RULES,
+                *config.mihomo.routing.direct_rules,
                 "MATCH,BASE",
             ],
         },

@@ -56,13 +56,11 @@ SAFE_PUBLIC_HOSTS = {
     "nodejs.org",
     "metacubex.one",
     "wiki.metacubex.one",
-    "music.example.invalid",
     "npmjs.org",
     "yarnpkg.com",
     "opencollective.com",
     "tidelift.com",
 }
-SAFE_PUBLIC_IPS = {"192.0.2.1", "192.0.2.1"}
 TEXT_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".json", ".toml", ".sh", ".jsx", ".html", ".css"}
 
 
@@ -74,7 +72,7 @@ def _is_neutral_hostname(value: str) -> bool:
 def _is_neutral_ip(value: str) -> bool:
     address = ipaddress.ip_address(value)
     shared_range = ipaddress.ip_network("100.64.0.0/10")
-    return value in SAFE_PUBLIC_IPS or address in shared_range or not address.is_global
+    return address in shared_range or not address.is_global
 
 
 def _is_neutral_ssh_target(value: str) -> bool:
@@ -146,6 +144,11 @@ def test_repository_configuration_example_uses_an_empty_hosts_mapping():
     config = yaml.safe_load((REPO_ROOT / "examples/config.yaml").read_text(encoding="utf-8"))
 
     assert config["mihomo"]["hosts"] == {}
+    assert config["mihomo"]["geox_urls"] == {}
+    assert config["mihomo"]["routing"] == {
+        "direct_node_name_keywords": [],
+        "direct_rules": [],
+    }
 
 
 def test_tracked_repository_network_literals_are_neutral_or_public_dependencies():

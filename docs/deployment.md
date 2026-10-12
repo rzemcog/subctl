@@ -119,8 +119,8 @@ the last verified active record for operator recovery.
 
 ## Status and rollback
 
-Status keeps two revisions distinct: `$SUBCTL_SOURCE_DIR` source checkout `HEAD` and
-the release recorded in `/var/lib/subctl/releases/current.json`. Rollback
+Status keeps the source checkout `HEAD` distinct from the release recorded in
+`/var/lib/subctl/releases/current.json`. Rollback
 intentionally leaves the source checkout on the current release-control
 branch; the old release's commit remains the provenance/audit anchor while the
 saved package is installed.

@@ -33,8 +33,16 @@ class PublicConfig:
 
 
 @dataclass(frozen=True)
+class MihomoRoutingConfig:
+    direct_node_name_keywords: tuple[str, ...]
+    direct_rules: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class MihomoConfig:
     hosts: Mapping[str, str]
+    geox_urls: Mapping[str, str]
+    routing: MihomoRoutingConfig
 
 
 @dataclass(frozen=True)
@@ -238,7 +246,7 @@ def _load_mihomo_config(value: Any) -> MihomoConfig:
         value = {}
     if not isinstance(value, dict):
         raise ValidationError("mihomo must be a mapping")
-    unknown = sorted(set(value) - {"hosts"})
+    unknown = sorted(set(value) - {"hosts", "geox_urls", "routing"})
     if unknown:
         raise ValidationError("mihomo contains unsupported field(s): " + ", ".join(unknown))
 
@@ -263,7 +271,74 @@ def _load_mihomo_config(value: Any) -> MihomoConfig:
             raise ValidationError("mihomo.hosts values must be unscoped IP addresses")
         normalized[key] = parsed_address.compressed
 
-    return MihomoConfig(hosts=MappingProxyType(normalized))
+    geox_urls_value = value.get("geox_urls", {})
+    if geox_urls_value is None:
+        geox_urls_value = {}
+    if not isinstance(geox_urls_value, dict):
+        raise ValidationError("mihomo.geox_urls must map GeoX data names to URLs")
+    supported_geox_names = {"geoip", "geosite", "mmdb", "asn"}
+    unknown_geox_names = sorted(set(geox_urls_value) - supported_geox_names)
+    if unknown_geox_names:
+        raise ValidationError(
+            "mihomo.geox_urls contains unsupported data name(s): "
+            + ", ".join(unknown_geox_names)
+        )
+    geox_urls: dict[str, str] = {}
+    for name, url in geox_urls_value.items():
+        if not isinstance(url, str) or not url.strip():
+            raise ValidationError(f"mihomo.geox_urls.{name} must be an HTTP(S) URL")
+        normalized_url = url.strip()
+        parsed_url = urlparse(normalized_url)
+        if (
+            parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            raise ValidationError(
+                f"mihomo.geox_urls.{name} must be an HTTP(S) URL without credentials, query, or fragment"
+            )
+        if any(ord(char) < 32 or ord(char) == 127 for char in normalized_url):
+            raise ValidationError(f"mihomo.geox_urls.{name} must be an HTTP(S) URL")
+        geox_urls[name] = normalized_url
+
+    routing_value = value.get("routing", {})
+    if routing_value is None:
+        routing_value = {}
+    if not isinstance(routing_value, dict):
+        raise ValidationError("mihomo.routing must be a mapping")
+    unknown_routing = sorted(
+        set(routing_value) - {"direct_node_name_keywords", "direct_rules"}
+    )
+    if unknown_routing:
+        raise ValidationError(
+            "mihomo.routing contains unsupported field(s): "
+            + ", ".join(unknown_routing)
+        )
+    direct_node_name_keywords = _string_list(
+        routing_value.get("direct_node_name_keywords", []),
+        "mihomo.routing.direct_node_name_keywords",
+    )
+    direct_rules = _string_list(
+        routing_value.get("direct_rules", []),
+        "mihomo.routing.direct_rules",
+    )
+    if any(
+        any(ord(char) < 32 or ord(char) == 127 for char in item)
+        for item in (*direct_node_name_keywords, *direct_rules)
+    ):
+        raise ValidationError("mihomo.routing values must not contain control characters")
+
+    return MihomoConfig(
+        hosts=MappingProxyType(normalized),
+        geox_urls=MappingProxyType(geox_urls),
+        routing=MihomoRoutingConfig(
+            direct_node_name_keywords=direct_node_name_keywords,
+            direct_rules=direct_rules,
+        ),
+    )
 
 
 def _normalize_mihomo_hostname(value: Any) -> str:
@@ -310,6 +385,7 @@ def _load_gateway_config(value: Any) -> GatewayConfig:
         "controller_port",
         "base_default",
         "physical_interface",
+        "dns_nameservers",
     ]
     missing = [f"gateway.{field}" for field in required if value.get(field) is None]
     if missing:
@@ -351,10 +427,16 @@ def _load_gateway_config(value: Any) -> GatewayConfig:
     tun_output_path = Path(tun_output_path)
     if not tun_output_path.is_absolute():
         raise ValidationError("gateway.tun_output_path must be an absolute path")
-    dns_nameservers = _string_list(
-        value.get("dns_nameservers", ["192.0.2.1", "192.0.2.1"]),
-        "gateway.dns_nameservers",
-    )
+    dns_nameservers = _string_list(value["dns_nameservers"], "gateway.dns_nameservers")
+    if not dns_nameservers:
+        raise ValidationError("gateway.dns_nameservers must contain at least one IP address")
+    for nameserver in dns_nameservers:
+        try:
+            ipaddress.ip_address(nameserver)
+        except ValueError as exc:
+            raise ValidationError(
+                "gateway.dns_nameservers must contain IP address strings"
+            ) from exc
 
     return GatewayConfig(
         private_upstream_url=_require_http_url(

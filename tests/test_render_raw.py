@@ -84,8 +84,8 @@ def test_raw_render_excludes_shared_provider_nodes_by_name(
     cache.write_text(
         "\n".join(
             [
-                "trojan://pass@one.example:443#Excluded-1",
-                "trojan://pass@two.example:443#МОСКВА-2",
+                "trojan://pass@one.example:443#SampleRegion-1",
+                "trojan://pass@two.example:443#SampleRegion-2",
                 "trojan://pass@three.example:443#Ordinary-3",
             ]
         ),

@@ -11,6 +11,10 @@ public:
 
 mihomo:
   hosts: {}
+  geox_urls: {}
+  routing:
+    direct_node_name_keywords: []
+    direct_rules: []
 
 render:
   profile_update_interval_seconds: 3600
@@ -37,4 +41,4 @@ render:
 #   physical_interface: "eth0"
 #   external_ui_path: "/var/lib/mihomo/ui/current"
 #   tun_output_path: "/etc/mihomo/config-tun.yaml"
-#   dns_nameservers: ["192.0.2.1", "192.0.2.1"]
+#   dns_nameservers: ["192.0.2.53", "198.51.100.53"]

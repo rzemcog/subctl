@@ -17,6 +17,10 @@ public:
 
 mihomo:
   hosts: {}
+  geox_urls: {}
+  routing:
+    direct_node_name_keywords: []
+    direct_rules: []
 
 render:
   profile_update_interval_seconds: 3600
@@ -42,18 +46,19 @@ gateway:
   physical_interface: "eth0"
   external_ui_path: "/var/lib/mihomo/ui/current"
   tun_output_path: "/etc/mihomo/config-tun.yaml"
-  dns_nameservers: ["192.0.2.1", "192.0.2.1"]
+  # Documentation-only addresses; replace them with the deployment resolvers.
+  dns_nameservers: ["192.0.2.53", "198.51.100.53"]
 ```
 
 `render.provider_download_proxy` is deprecated. It remains accepted when loading existing config and UI settings, but no longer changes generated fetch routes. Both profile types use the shared `FETCH-AUTO-PROVIDER` and `FETCH-PRIVATE` recovery groups. Keep existing values or remove them during config cleanup; new settings submissions omit this field.
 
-`mihomo.hosts` is an optional protected mapping from exact DNS hostnames to unscoped IP addresses. The renderer copies validated entries into generated Mihomo profiles without replacing the URL hostname, HTTP Host, or TLS SNI. UI settings cannot change this map.
+The `mihomo` section is protected deployment configuration and cannot be changed through UI settings. `mihomo.hosts` maps exact DNS hostnames to unscoped IP addresses; validated entries are copied into generated profiles without replacing the URL hostname, HTTP Host, or TLS SNI.
 
 User and gateway profiles share a policy topology with a LIVE HTTP provider and inline SEED snapshot. `PROVIDER-AUTO` prefers `PROVIDER-AUTO-LIVE`, then `PROVIDER-AUTO-SEED`. The user `BASE` defaults to `PROXY`; gateway `BASE` keeps `gateway.base_default`. Provider downloads use `FETCH-PRIVATE` (SEED, DIRECT) and `FETCH-AUTO-PROVIDER` (PRIVATE, SEED, DIRECT). The gateway keeps its configured direct upstream provider URL; user profiles use the published `/feeds/provider/...` source. The public LIVE provider sends a browser-like `User-Agent` header; the gateway source does not. Original node names remain visible without LIVE, SEED, or BOOTSTRAP prefixes, and fetch recovery does not add duplicate seed proxies to the top-level `proxies` list.
 
-Both profile types route `GEOSITE,example`, `GEOSITE,example`, `GEOSITE,example`, `.ru`, `.рф`, `music.example.invalid`, and `GEOIP,RU` to `DIRECT-NODES`. That selector starts on `DIRECT` and can be switched to `DIRECT-PROXY`. The latter contains LIVE nodes whose names include `Preferred` or `Sample`, case-insensitively. Other LIVE nodes matching `render.provider_exclude_keywords` are available in `EXCLUDED-NODES`; RU-named nodes take precedence when a name matches both classes. `PROVIDER-AUTO-LIVE` excludes both classes, and `PROVIDER-AUTO-SEED` excludes RU names in addition to the existing SEED exclusions. `PROXY` includes `DIRECT-PROXY` and `EXCLUDED-NODES`; `BASE` includes `DIRECT-PROXY`. `GLOBAL` lists all policy groups, including the new selectors.
+Set `mihomo.routing.direct_node_name_keywords` to classify provider nodes whose names belong in the `DIRECT-PROXY` selector. Set `mihomo.routing.direct_rules` to append operator-specific Mihomo rules before the final `MATCH,BASE` rule. Those values are not part of the UI settings overlay. With empty lists, no custom direct rules or node-name keywords are applied. Other LIVE nodes matching `render.provider_exclude_keywords` remain available in `EXCLUDED-NODES`; direct-node keywords take precedence when a name matches both classes. `PROXY` includes `DIRECT-PROXY` and `EXCLUDED-NODES`; `BASE` includes `DIRECT-PROXY`.
 
-Generated profiles use the MetaCubeX `geox-url` resources `geoip-lite.dat`, `geosite.dat`, `geoip.metadb`, and `GeoLite2-ASN.mmdb`, with automatic updates every 24 hours. `geodata-mode: false` makes `GEOIP` rules use the full MMDB database instead of the lite DAT file. No binary geodata files are merged. User profiles enable TUN with `auto-route`, the `mips` stack, and MTU 1350. When the public endpoint hostname has an entry in protected `mihomo.hosts`, that mapped address is excluded from TUN routing; if `public.base_url` uses an IP literal, that endpoint address is excluded directly. No endpoint mapping or exclusion is added when the protected configuration does not provide one. Gateway TUN settings remain controlled by the gateway renderer and its explicit `enable_tun` option.
+`mihomo.geox_urls` optionally maps `geoip`, `geosite`, `mmdb`, and `asn` to public source URLs. Configured URLs are copied into generated profiles and must not contain credentials, query parameters, or fragments; an empty mapping leaves source selection to Mihomo. Automatic geodata updates run every 24 hours. `geodata-mode: false` makes `GEOIP` rules use the full MMDB database instead of a lite DAT file. No binary geodata files are merged. User profiles enable TUN with `auto-route`, the `mips` stack, and MTU 1350. When the public endpoint hostname has an entry in protected `mihomo.hosts`, that mapped address is excluded from TUN routing; if `public.base_url` uses an IP literal, that endpoint address is excluded directly. No endpoint mapping or exclusion is added when the protected configuration does not provide one. Gateway TUN settings remain controlled by the gateway renderer and its explicit `enable_tun` option.
 
 When provider inclusion is enabled, both renderers need a validated `provider.decoded` snapshot in the configured state cache to embed `provider-seed`. Run `subctl refresh-provider` before a first gateway render if that cache has not been populated.
 
@@ -100,4 +105,4 @@ Published safe UI settings are stored in
 health-check parameters, provider exclusions, composition order and prefixes.
 They cannot replace secrets, gateway routing rules or the protected registry.
 
-The Web UI and systemd refresh timer apply the same effective configuration. UI settings cannot change `mihomo.hosts`, gateway routing, or credentials.
+The Web UI and systemd refresh timer apply the same effective configuration. UI settings cannot change protected Mihomo policy and data sources, gateway routing, or credentials.

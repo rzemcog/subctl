@@ -2,9 +2,9 @@ geodata-mode: false
 geo-auto-update: true
 geo-update-interval: 24
 geox-url:
-  geoip: https://geo.example.invalid/geoip-lite.dat
+  geoip: https://geo.example.invalid/geoip.dat
   geosite: https://geo.example.invalid/geosite.dat
-  mmdb: https://geo.example.invalid/geoip.metadb
+  mmdb: https://geo.example.invalid/geoip.mmdb
   asn: https://geo.example.invalid/asn.mmdb
 proxy-providers:
   private:
@@ -112,7 +112,7 @@ proxy-groups:
   max-failed-times: 2
   tolerance: 50
   lazy: true
-  exclude-filter: (?i)(?:Excluded|SampleRegion|Preferred|Sample)
+  exclude-filter: (?i)(?:Excluded|Preferred|Sample)
 - name: PROVIDER-AUTO-SEED
   type: url-test
   use:
@@ -135,7 +135,7 @@ proxy-groups:
   type: select
   use:
   - provider
-  filter: (?i)(?:Excluded|SampleRegion)
+  filter: (?i)(?:Excluded)
   exclude-filter: (?i)(?:Preferred|Sample)
   empty-fallback: REJECT
 - name: DIRECT-NODES
@@ -192,12 +192,6 @@ rules:
 - IP-CIDR,fc00::/7,DIRECT,no-resolve
 - IP-CIDR,fe80::/10,DIRECT,no-resolve
 - DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
-- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
-- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
-- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
-- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
-- DOMAIN-SUFFIX,example.invalid,DIRECT-NODES
-- GEOIP,ZZ,DIRECT-NODES
 - MATCH,BASE
 tun:
   enable: true

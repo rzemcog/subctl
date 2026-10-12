@@ -93,7 +93,7 @@ def test_missing_required_config_fields_are_listed(
         (
             "render",
             "provider_exclude_keywords",
-            ["SampleRegion", "москва"],
+            ["Excluded", "excluded"],
             "provider_exclude_keywords",
         ),
     ],
@@ -224,6 +224,9 @@ def test_mihomo_hosts_are_read_from_runtime_config_and_normalized(
         "sub.example.com": "192.0.2.27",
         "ipv6.example.test": "2001:db8::1",
     }
+    assert dict(config.mihomo.geox_urls) == {}
+    assert config.mihomo.routing.direct_node_name_keywords == ()
+    assert config.mihomo.routing.direct_rules == ()
 
 
 def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
@@ -235,6 +238,9 @@ def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
     config = load_config(path, state_dir=provider_state_dir)
 
     assert dict(config.mihomo.hosts) == {}
+    assert dict(config.mihomo.geox_urls) == {}
+    assert config.mihomo.routing.direct_node_name_keywords == ()
+    assert config.mihomo.routing.direct_rules == ()
 
 
 @pytest.mark.parametrize(
@@ -242,6 +248,12 @@ def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
     [
         [],
         {"hosts": []},
+        {"geox_urls": []},
+        {"routing": []},
+        {"routing": {"direct_rules": ["one\ntwo"]}},
+        {"geox_urls": {"other": "https://geo.example.test/file.dat"}},
+        {"geox_urls": {"geoip": "https://geo.example.test/file.dat"}},
+        {"geox_urls": {"geoip": "https://geo.example.test/file.dat"}},
         {"hosts": {"invalid host.example": "192.0.2.27"}},
         {"hosts": {"192.0.2.27": "192.0.2.28"}},
         {"hosts": {"sub.example.test": "not-an-ip"}},
@@ -263,8 +275,14 @@ def test_invalid_mihomo_hosts_are_rejected(
         load_config(path, state_dir=provider_state_dir)
 
 
-def test_mihomo_hosts_are_not_mutable_through_ui_settings():
+@pytest.mark.parametrize(
+    "mihomo",
+    [
+        {"hosts": {"sub.example.test": "192.0.2.27"}},
+        {"routing": {"direct_rules": ["DOMAIN,example.test,DIRECT"]}},
+        {"geox_urls": {"geoip": "https://geo.example.test/file.dat"}},
+    ],
+)
+def test_mihomo_configuration_is_not_mutable_through_ui_settings(mihomo):
     with pytest.raises(ValidationError, match="unsupported field"):
-        validate_settings_overlay(
-            {"mihomo": {"hosts": {"sub.example.test": "192.0.2.27"}}}
-        )
+        validate_settings_overlay({"mihomo": mihomo})
