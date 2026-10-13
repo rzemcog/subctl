@@ -46,6 +46,7 @@ SAFE_PUBLIC_HOSTS = {
     "example.com",
     "example.net",
     "example.org",
+    "yandex.com",
     "github.com",
     "gstatic.com",
     "music.yandex.com",
