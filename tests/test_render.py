@@ -320,8 +320,11 @@ def test_ru_default_rules_normalize_and_deduplicate_operator_duplicates(
 ):
     config_data["mihomo"]["routing"]["direct_rules"] = [
         "GEOSITE,vk,DIRECT",
+        "GEOSITE,mailru,DIRECT",
+        "GEOSITE,category-ru,DIRECT",
         "DOMAIN-SUFFIX,.ru,DIRECT",
         "DOMAIN-SUFFIX,.рф,DIRECT",
+        "DOMAIN-SUFFIX,music.yandex.com,DIRECT",
         "GEOIP,ru,DIRECT",
         "DOMAIN-SUFFIX,.Example.invalid,DIRECT-NODES",
         "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
@@ -336,10 +339,14 @@ def test_ru_default_rules_normalize_and_deduplicate_operator_duplicates(
     rules = profile["rules"]
     routed = [rule for rule in rules if rule.endswith(",DIRECT-NODES")]
 
-    assert rules.count("GEOSITE,VK,DIRECT-NODES") == 1
-    assert rules.count("DOMAIN-SUFFIX,ru,DIRECT-NODES") == 1
-    assert rules.count("DOMAIN-SUFFIX,xn--p1ai,DIRECT-NODES") == 1
+    assert rules.count("GEOSITE,CATEGORY-RU,DIRECT-NODES") == 1
+    assert rules.count("GEOSITE,2GIS,DIRECT-NODES") == 1
     assert rules.count("GEOIP,RU,DIRECT-NODES") == 1
+    assert "DOMAIN-SUFFIX,ru,DIRECT-NODES" not in rules
+    assert "DOMAIN-SUFFIX,xn--p1ai,DIRECT-NODES" not in rules
+    assert "DOMAIN-SUFFIX,music.yandex.com,DIRECT-NODES" not in rules
+    assert "GEOSITE,VK,DIRECT-NODES" not in rules
+    assert "GEOSITE,MAILRU,DIRECT-NODES" not in rules
     assert rules.count("DOMAIN-SUFFIX,example.invalid,DIRECT-NODES") == 1
     assert len(routed) == len(set(routed))
 

@@ -36,9 +36,10 @@ def merge_geoip_dat(base: bytes, supplement: bytes) -> bytes:
 def derive_ru_direct_rules(ru_geosite: bytes, merged_geosite: bytes) -> tuple[str, ...]:
     """Return a compact deterministic selector set covering RU geosite data.
 
-    The existing GEOSITE and DOMAIN-SUFFIX rules are fixed. Additional GEOSITE
-    selectors are chosen only when they cover a source domain not covered yet.
-    Every chosen tag must exist in the merged output database.
+    Requested GEOSITE selectors and suffix rules seed coverage, but any rule
+    wholly covered by another selected matcher is omitted. Additional GEOSITE
+    selectors are chosen only when needed for source domains. Every chosen tag
+    must exist in the merged output database.
     """
 
     source = _read_geosite(ru_geosite)
@@ -52,17 +53,25 @@ def derive_ru_direct_rules(ru_geosite: bytes, merged_geosite: bytes) -> tuple[st
     missing = sorted(fixed_code_set - target.keys())
     if missing:
         raise ValueError("merged geosite is missing required tags: " + ", ".join(missing))
+    minimized_fixed_codes = _minimize_geosite_codes(fixed_codes, target)
+    fixed_geosite_matchers = set().union(
+        *(target[code] for code in minimized_fixed_codes)
+    )
 
     all_source_patterns = set().union(*source.values()) if source else set()
-    matchers: set[tuple[int, str]] = set()
+    other_rules = [
+        rule
+        for rule in MANUAL_RU_DIRECT_RULES
+        if not rule.upper().startswith("GEOSITE,")
+        and not _domain_suffix_rule_is_covered(rule, fixed_geosite_matchers)
+    ]
+    matchers = set(fixed_geosite_matchers)
     for rule in MANUAL_RU_DIRECT_RULES:
         parts = rule.split(",")
-        if parts[0].upper() == "GEOSITE":
-            matchers.update(target[parts[1].upper()])
-        elif parts[0].upper() == "DOMAIN-SUFFIX":
+        if parts[0].upper() == "DOMAIN-SUFFIX":
             matchers.add((2, _normalize_domain(parts[1])))
 
-    selected = list(fixed_codes)
+    selected = list(minimized_fixed_codes)
     uncovered = {
         pattern
         for pattern in all_source_patterns
@@ -105,13 +114,14 @@ def derive_ru_direct_rules(ru_geosite: bytes, merged_geosite: bytes) -> tuple[st
     while changed:
         changed = False
         for code in tuple(supplemental):
-            other_matchers = {
-                (2, _normalize_domain(rule.split(",")[1]))
-                for rule in MANUAL_RU_DIRECT_RULES
-                if rule.split(",")[0].upper() == "DOMAIN-SUFFIX"
-            }
-            for other in (*fixed_codes, *(item for item in supplemental if item != code)):
-                other_matchers.update(target[other])
+            other_matchers = set().union(
+                *(target[other] for other in minimized_fixed_codes),
+                *(target[item] for item in supplemental if item != code),
+            )
+            for rule in other_rules:
+                parts = rule.split(",")
+                if parts[0].upper() == "DOMAIN-SUFFIX":
+                    other_matchers.add((2, _normalize_domain(parts[1])))
             if all(
                 _pattern_is_covered(pattern, other_matchers)
                 for pattern in source[code]
@@ -120,14 +130,59 @@ def derive_ru_direct_rules(ru_geosite: bytes, merged_geosite: bytes) -> tuple[st
                 changed = True
                 break
 
-    geosite_rules = [
-        rule for rule in MANUAL_RU_DIRECT_RULES if rule.upper().startswith("GEOSITE,")
+    final_geosite_matchers = set().union(
+        *(target[code] for code in minimized_fixed_codes),
+        *(target[code] for code in supplemental),
+    )
+    minimized_other_rules = [
+        rule
+        for rule in other_rules
+        if not _domain_suffix_rule_is_covered(rule, final_geosite_matchers)
     ]
-    other_rules = [
-        rule for rule in MANUAL_RU_DIRECT_RULES if not rule.upper().startswith("GEOSITE,")
+    geosite_rules = [
+        f"GEOSITE,{code},DIRECT-NODES" for code in minimized_fixed_codes
     ]
     return tuple(
-        [*geosite_rules, *(f"GEOSITE,{code},DIRECT-NODES" for code in supplemental), *other_rules]
+        [
+            *geosite_rules,
+            *(f"GEOSITE,{code},DIRECT-NODES" for code in supplemental),
+            *minimized_other_rules,
+        ]
+    )
+
+
+def _minimize_geosite_codes(
+    codes: tuple[str, ...], tags: dict[str, set[tuple[int, str]]]
+) -> tuple[str, ...]:
+    selected = list(codes)
+    changed = True
+    while changed:
+        changed = False
+        for code in tuple(selected):
+            other_matchers = set().union(
+                *(tags[other] for other in selected if other != code)
+            )
+            if all(
+                _pattern_is_covered(pattern, other_matchers)
+                for pattern in tags[code]
+            ):
+                selected.remove(code)
+                changed = True
+                break
+    return tuple(selected)
+
+
+def _domain_suffix_rule_is_covered(
+    rule: str, geosite_matchers: set[tuple[int, str]]
+) -> bool:
+    parts = rule.split(",")
+    if len(parts) < 2 or parts[0].upper() != "DOMAIN-SUFFIX":
+        return False
+    suffix = _normalize_domain(parts[1].strip("."))
+    return any(
+        matcher_type == 2
+        and (suffix == matcher_domain or suffix.endswith("." + matcher_domain))
+        for matcher_type, matcher_domain in geosite_matchers
     )
 
 

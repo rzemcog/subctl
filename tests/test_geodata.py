@@ -91,7 +91,17 @@ def test_ru_geosite_rules_are_minimized_against_manual_rules():
             _geosite_entry("VK", [(2, "vk.example.com")]),
             _geosite_entry("MAILRU", [(2, "mail.example")]),
             _geosite_entry("MAILRU-GROUP", [(2, "mail.example")]),
-            _geosite_entry("CATEGORY-RU", [(2, "service.example")]),
+            _geosite_entry(
+                "CATEGORY-RU",
+                [
+                    (2, "service.example"),
+                    (2, "vk.example.com"),
+                    (2, "mail.example"),
+                    (2, "ru"),
+                    (2, "xn--p1ai"),
+                    (2, "yandex.com"),
+                ],
+            ),
             _geosite_entry("RU-ONLY-ALIAS", [(2, "service.example")]),
             _geosite_entry("2GIS", [(2, "map.2gis.example.com"), (2, "2gis.example.com")]),
         ]
@@ -99,7 +109,11 @@ def test_ru_geosite_rules_are_minimized_against_manual_rules():
 
     rules = derive_ru_direct_rules(site, site)
 
-    assert rules == DEFAULT_RU_DIRECT_RULES
+    assert rules == (
+        "GEOSITE,CATEGORY-RU,DIRECT-NODES",
+        "GEOSITE,2GIS,DIRECT-NODES",
+        "GEOIP,RU,DIRECT-NODES",
+    )
     assert len(rules) == len(set(rules))
 
 
@@ -150,7 +164,17 @@ def test_build_ru_geodata_writes_one_minimized_rule_list(tmp_path):
             [
                 _geosite_entry("VK", [(2, "vk.example.com")]),
                 _geosite_entry("MAILRU", [(2, "mail.example")]),
-                _geosite_entry("CATEGORY-RU", [(2, "service.example")]),
+                _geosite_entry(
+                    "CATEGORY-RU",
+                    [
+                        (2, "service.example"),
+                        (2, "vk.example.com"),
+                        (2, "mail.example"),
+                        (2, "ru"),
+                        (2, "xn--p1ai"),
+                        (2, "yandex.com"),
+                    ],
+                ),
                 _geosite_entry("2GIS", [(2, "2gis.example.com")]),
             ]
         )
