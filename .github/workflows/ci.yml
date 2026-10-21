@@ -18,7 +18,22 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
-      - run: pytest -q
+      - name: Run pytest
+        run: pytest -q --junitxml=pytest-results.xml
+      - name: Report failed test names
+        if: failure()
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("pytest-results.xml").getroot()
+          for case in root.iter("testcase"):
+              if case.find("failure") is not None or case.find("error") is not None:
+                  nodeid = ".".join(
+                      value for value in (case.get("classname"), case.get("name")) if value
+                  )
+                  print(f"::error title=pytest failure::{nodeid}")
+          PY
 
   web:
     runs-on: ubuntu-latest
