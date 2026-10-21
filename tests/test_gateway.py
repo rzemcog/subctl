@@ -142,6 +142,35 @@ def test_gateway_profile_uses_direct_sources_and_canonical_proxy_policy(
     assert profile["rules"][-1] == "MATCH,BASE"
 
 
+def test_gateway_profile_passes_rule_providers_and_rules_through(
+    gateway_config_data, write_yaml, provider_state_dir
+):
+    provider = {
+        "type": "http",
+        "behavior": "ipcidr",
+        "format": "text",
+        "url": "https://rules.example.invalid/ranges.txt",
+        "path": "./ruleset/sample-ranges.txt",
+        "interval": 86400,
+        "header": {"X-Example": ["first", "second"]},
+    }
+    rules = [
+        "DOMAIN-SUFFIX,example.invalid,DIRECT",
+        "RULE-SET,sample-ranges,DIRECT",
+    ]
+    gateway_config_data["mihomo"]["rule_providers"] = {"sample-ranges": provider}
+    gateway_config_data["mihomo"]["rules"] = rules
+    config = load_config(
+        write_yaml("gateway-rule-policy.yaml", gateway_config_data),
+        state_dir=provider_state_dir,
+    )
+
+    profile = build_gateway_profile(config)
+
+    assert profile["rule-providers"] == {"sample-ranges": provider}
+    assert profile["rules"][-(len(rules) + 1) :] == [*rules, "MATCH,BASE"]
+
+
 def test_gateway_and_user_profiles_render_vless_websocket_seed(
     gateway_config_path, users_path, provider_state_dir
 ):

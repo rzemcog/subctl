@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from subctl.jobs import JobRunner, JobStore
@@ -35,9 +36,17 @@ def test_job_store_recovers_and_prunes(tmp_path: Path) -> None:
 def test_runner_executes_render_job(tmp_path: Path) -> None:
     store = JobStore(tmp_path / "jobs.sqlite3")
     runner = JobRunner(FakeService(), store)
-    job = runner.enqueue("render_all")
-    next_job = store.claim_next()
-    assert next_job["id"] == job["id"]
-    message = runner._execute(next_job)
-    store.finish(job["id"], status="succeeded", message=message)
-    assert store.get(job["id"])["message"] == "rendered=2 skipped=0 failed=0"
+    runner.start()
+    try:
+        job = runner.enqueue("render_all")
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            current = store.get(job["id"])
+            if current["status"] in {"succeeded", "failed", "interrupted"}:
+                break
+            time.sleep(0.01)
+
+        assert current["status"] == "succeeded"
+        assert current["message"] == "rendered=2 skipped=0 failed=0"
+    finally:
+        runner.stop()

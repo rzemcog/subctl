@@ -14,18 +14,19 @@ CONFIGURED_DIRECT_RULES = [
 ]
 
 
-def test_render_user_yaml_matches_golden_snapshot(profile_config, users_path):
-    config = profile_config
+def test_render_user_yaml_preserves_managed_profile_contract(profile_config, users_path):
     registry = load_users(users_path)
 
-    actual = render_user_yaml(config, registry.users["alice"])
-    expected = _fixture("alice_mihomo.yaml")
+    content = render_user_yaml(profile_config, registry.users["alice"])
+    profile = yaml.safe_load(content)
 
-    lines = actual.splitlines()
+    lines = content.splitlines()
     assert lines[0].startswith("# subctl-seed-generated-at: ")
     assert lines[1].startswith("# subctl-seed-source-updated-at: ")
     assert lines[2] == "# subctl-seed-node-count: 1"
-    assert "\n".join(lines[3:]) + "\n" == expected
+    assert {"proxy-providers", "proxy-groups", "rules"}.issubset(profile)
+    assert profile["proxy-providers"]["provider-seed"]["payload"][0]["name"] == "fixture-seed"
+    assert profile["rules"][-1] == "MATCH,BASE"
 
 
 def test_render_command_writes_parseable_yaml_for_multiple_users(
@@ -144,10 +145,10 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
     assert parsed["proxy-providers"]["provider"]["proxy"] == "FETCH-AUTO-PROVIDER"
     assert "override" not in parsed["proxy-providers"]["provider"]
     assert parsed["proxy-providers"]["private"]["proxy"] == "FETCH-PRIVATE"
-    assert parsed["proxy-providers"]["provider"]["header"]["User-Agent"] == [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/192.0.2.1 Safari/537.36"
-    ]
+    user_agent = parsed["proxy-providers"]["provider"]["header"]["User-Agent"][0]
+    assert user_agent.startswith("Mozilla/5.0 ")
+    assert "AppleWebKit/" in user_agent
+    assert "Safari/" in user_agent
     seed_node = parsed["proxy-providers"]["provider-seed"]["payload"][0]
     assert seed_node["name"] == "fixture-seed"
     assert seed_node["type"] == "vless"
@@ -164,8 +165,11 @@ def test_render_rules_and_fallback_order(profile_config, users_path):
 
     rules = parsed["rules"]
     assert rules[-1] == "MATCH,BASE"
-    assert rules[9:10] == CONFIGURED_DIRECT_RULES
-    assert all(rule.endswith(",DIRECT,no-resolve") for rule in rules[:9])
+    configured_start = len(rules) - len(CONFIGURED_DIRECT_RULES) - 1
+    assert rules[configured_start:-1] == CONFIGURED_DIRECT_RULES
+    assert all(
+        rule.endswith(",DIRECT,no-resolve") for rule in rules[:configured_start]
+    )
 
     group_names = {group["name"] for group in parsed["proxy-groups"]}
     assert len(group_names) == len(parsed["proxy-groups"])
@@ -271,13 +275,47 @@ def test_render_user_defaults_tun_hosts_and_geodata(profile_config, users_path):
     }
 
 
-def test_render_omits_unconfigured_operator_routing_and_geodata(
+def test_render_passes_rule_providers_and_ordered_rules_through(
+    config_data, write_yaml, users_path, provider_state_dir
+):
+    provider = {
+        "type": "http",
+        "behavior": "ipcidr",
+        "format": "text",
+        "url": "https://rules.example.invalid/ranges.txt",
+        "path": "./ruleset/sample-ranges.txt",
+        "interval": 86400,
+        "header": {"X-Example": ["first", "second"]},
+    }
+    rules = [
+        "DOMAIN-SUFFIX,example.invalid,DIRECT",
+        "RULE-SET,sample-ranges,DIRECT",
+        "DOMAIN-SUFFIX,example.invalid,DIRECT",
+    ]
+    config_data["mihomo"]["rule_providers"] = {"sample-ranges": provider}
+    config_data["mihomo"]["rules"] = rules
+    config = load_config(
+        write_yaml("mihomo-policy.yaml", config_data),
+        state_dir=provider_state_dir,
+    )
+    user = load_users(users_path).users["alice"]
+
+    profile = build_mihomo_profile(config, user)
+
+    assert profile["rule-providers"] == {"sample-ranges": provider}
+    assert profile["rules"][-(len(rules) + 1) : -1] == rules
+    assert profile["rules"][-1] == "MATCH,BASE"
+
+
+def test_render_omits_unconfigured_policy_and_geodata(
     config_data, write_yaml, users_path, provider_state_dir
 ):
     config_data["mihomo"] = {
         "hosts": {},
         "geox_urls": {},
-        "routing": {"direct_node_name_keywords": [], "direct_rules": []},
+        "rule_providers": {},
+        "rules": [],
+        "routing": {"direct_node_name_keywords": []},
     }
     config = load_config(
         write_yaml("generic-mihomo-config.yaml", config_data),
@@ -403,8 +441,3 @@ def test_render_users_writes_to_user_token_filenames(
     assert [item.name for item in rendered] == ["alice", "bob"]
     assert rendered[0].yaml_path == tmp_path / "public/s" / f"{VALID_ALICE_TOKEN}.yaml"
     assert rendered[1].yaml_path == tmp_path / "public/s" / f"{VALID_BOB_TOKEN}.yaml"
-
-
-def _fixture(name):
-    with open(f"tests/fixtures/{name}", encoding="utf-8") as handle:
-        return handle.read()

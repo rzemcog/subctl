@@ -1,24 +1,24 @@
 from __future__ import annotations
 
 import ast
+import io
 import ipaddress
 import re
 import shlex
 import subprocess
+import tokenize
 from pathlib import Path
-
-import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOST_RE = re.compile(
     r"(?i)(?<![a-z0-9_-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
     r"(?:com|net|org|io|dev|app|test|example|invalid|one|online|local|"
     r"info|biz|ai|edu|gov|mil|co|ru|me|de|uk|us|ca|jp|in|pro|cloud|"
-    r"tech|tv|gg|name|xyz|site)(?![a-z0-9_-])"
+    r"tech|tv|gg|xyz|site|xn--[a-z0-9-]{2,59}[a-z0-9])(?![a-z0-9_-])"
 )
 IPV4_RE = re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])")
-CHROME_VERSION_RE = re.compile(r"(?i)Chrome/[0-9]+(?:\.[0-9]+){3}")
+IPV6_RE = re.compile(r"(?i)(?<![a-z0-9:.])([0-9a-f:.]{2,})(?![a-z0-9:.])")
+IPV6_LABEL_RE = re.compile(r"(?i)\bIPv6:\s*([0-9a-f:.]{2,})(?![a-z0-9:.])")
 WINDOWS_ABSOLUTE_PATH_RE = re.compile(
     r"(?i)(?<![a-z0-9])[a-z]:[\\/]"
     r"(?:[^\\/\s\"'`]+[\\/])+"
@@ -34,6 +34,7 @@ SAFE_HOST_SUFFIXES = (
     ".test",
     ".invalid",
     ".github.com",
+    ".githubusercontent.com",
     ".gstatic.com",
     ".python.org",
     ".ubuntu.com",
@@ -47,6 +48,7 @@ SAFE_PUBLIC_HOSTS = {
     "example.net",
     "example.org",
     "github.com",
+    "githubusercontent.com",
     "gstatic.com",
     "pypi.org",
     "caddyserver.com",
@@ -88,14 +90,38 @@ def _is_neutral_ssh_target(value: str) -> bool:
 def _domain_scan_text(path: Path, content: str) -> str:
     if path.suffix.casefold() == ".py":
         parsed = ast.parse(content)
-        return " ".join(
+        strings = [
             node.value
             for node in ast.walk(parsed)
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
-        )
+        ]
+        comments = [
+            token.string
+            for token in tokenize.generate_tokens(io.StringIO(content).readline)
+            if token.type == tokenize.COMMENT
+        ]
+        return " ".join((*strings, *comments))
     if path.suffix.casefold() in {".jsx", ".css", ".html"}:
         return " ".join(URL_RE.findall(content))
     return content
+
+
+def _ip_literals(content: str) -> list[str]:
+    found: list[str] = []
+    candidates = (
+        *IPV4_RE.findall(content),
+        *IPV6_RE.findall(content),
+        *IPV6_LABEL_RE.findall(content),
+    )
+    for candidate in candidates:
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        normalized = address.compressed
+        if normalized not in found:
+            found.append(normalized)
+    return found
 
 
 def _ssh_destinations(content: str) -> list[str]:
@@ -140,28 +166,45 @@ def _tracked_text_files() -> list[Path]:
     ]
 
 
-def test_repository_configuration_example_uses_an_empty_hosts_mapping():
-    config = yaml.safe_load((REPO_ROOT / "examples/config.yaml").read_text(encoding="utf-8"))
+def test_repository_neutrality_classifies_reserved_ipv6_as_neutral():
+    assert _is_neutral_ip("2001:db8::1") is True
 
-    assert config["mihomo"]["hosts"] == {}
-    assert config["mihomo"]["geox_urls"] == {}
-    assert config["mihomo"]["routing"] == {
-        "direct_node_name_keywords": [],
-        "direct_rules": [],
-    }
+
+def test_repository_neutrality_classifies_global_ipv6_without_embedding_it():
+    public_address = ipaddress.IPv6Address(
+        ":".join(("2606", "4700", "4700", "0", "0", "0", "0", "1111"))
+    )
+    assert _is_neutral_ip(public_address.compressed) is False
+    seven_hextets = ":".join(
+        ("2606", "4700", "4700", "0", "0", "0", "0", "", "")
+    )
+    assert _is_neutral_ip(ipaddress.IPv6Address(seven_hextets).compressed) is False
+
+
+def test_repository_neutrality_extracts_compressed_and_embedded_ipv6():
+    assert _ip_literals("resolver [2001:db8::53] and ::ffff:192.0.2.1") == [
+        "192.0.2.1",
+        "2001:db8::53",
+        "::ffff:192.0.2.1",
+    ]
+    seven_hextets = ":".join(
+        ("2606", "4700", "4700", "0", "0", "0", "0", "", "")
+    )
+    compressed = ipaddress.IPv6Address(seven_hextets).compressed
+    assert _ip_literals(f"[{seven_hextets}]") == [compressed]
+    assert _ip_literals("IPv6:2001:db8::53") == ["2001:db8::53"]
 
 
 def test_tracked_repository_network_literals_are_neutral_or_public_dependencies():
     unsafe_files: set[Path] = set()
     for path in _tracked_text_files():
         content = path.read_text(encoding="utf-8", errors="replace")
-        ip_text = CHROME_VERSION_RE.sub("", content)
         domain_text = _domain_scan_text(path, content)
         unsafe_host = any(
             not _is_neutral_hostname(host) for host in HOST_RE.findall(domain_text)
         )
         unsafe_ip = any(
-            not _is_neutral_ip(address) for address in IPV4_RE.findall(ip_text)
+            not _is_neutral_ip(address) for address in _ip_literals(content)
         )
         unsafe_path = bool(
             WINDOWS_ABSOLUTE_PATH_RE.search(content) or UNIX_USER_HOME_RE.search(content)

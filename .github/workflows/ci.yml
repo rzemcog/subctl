@@ -19,7 +19,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
       - name: Run pytest
-        run: pytest -q --junitxml=pytest-results.xml
+        run: pytest -q -m "not mihomo_integration" --junitxml=pytest-results.xml
       - name: Report failed test names
         if: failure()
         run: |
@@ -27,6 +27,36 @@ jobs:
           import xml.etree.ElementTree as ET
 
           root = ET.parse("pytest-results.xml").getroot()
+          for case in root.iter("testcase"):
+              if case.find("failure") is not None or case.find("error") is not None:
+                  nodeid = ".".join(
+                      value for value in (case.get("classname"), case.get("name")) if value
+                  )
+                  print(f"::error title=pytest failure::{nodeid}")
+          PY
+
+  mihomo-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - name: Download pinned Mihomo
+        run: python scripts/download-mihomo.py --output "$RUNNER_TEMP/mihomo"
+      - name: Run Mihomo integration tests
+        run: |
+          MIHOMO_BIN="$RUNNER_TEMP/mihomo" pytest -q -m mihomo_integration --junitxml=pytest-mihomo-results.xml
+      - name: Report failed Mihomo test names
+        if: failure()
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("pytest-mihomo-results.xml").getroot()
           for case in root.iter("testcase"):
               if case.find("failure") is not None or case.find("error") is not None:
                   nodeid = ".".join(

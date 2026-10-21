@@ -35,13 +35,14 @@ class PublicConfig:
 @dataclass(frozen=True)
 class MihomoRoutingConfig:
     direct_node_name_keywords: tuple[str, ...]
-    direct_rules: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class MihomoConfig:
     hosts: Mapping[str, str]
     geox_urls: Mapping[str, str]
+    rule_providers: Mapping[str, Mapping[str, Any]]
+    rules: tuple[str, ...]
     routing: MihomoRoutingConfig
 
 
@@ -246,7 +247,9 @@ def _load_mihomo_config(value: Any) -> MihomoConfig:
         value = {}
     if not isinstance(value, dict):
         raise ValidationError("mihomo must be a mapping")
-    unknown = sorted(set(value) - {"hosts", "geox_urls", "routing"})
+    unknown = sorted(
+        set(value) - {"hosts", "geox_urls", "rule_providers", "rules", "routing"}
+    )
     if unknown:
         raise ValidationError("mihomo contains unsupported field(s): " + ", ".join(unknown))
 
@@ -304,6 +307,23 @@ def _load_mihomo_config(value: Any) -> MihomoConfig:
             raise ValidationError(f"mihomo.geox_urls.{name} must be an HTTP(S) URL")
         geox_urls[name] = normalized_url
 
+    rule_providers_value = value.get("rule_providers", {})
+    if rule_providers_value is None:
+        rule_providers_value = {}
+    if not isinstance(rule_providers_value, dict):
+        raise ValidationError("mihomo.rule_providers must map names to provider definitions")
+    rule_providers: dict[str, Mapping[str, Any]] = {}
+    for name, definition in rule_providers_value.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValidationError("mihomo.rule_providers names must be non-empty strings")
+        if any(ord(char) < 32 or ord(char) == 127 for char in name):
+            raise ValidationError("mihomo.rule_providers names must not contain control characters")
+        if not isinstance(definition, dict):
+            raise ValidationError(f"mihomo.rule_providers.{name} must be a mapping")
+        rule_providers[name] = _copy_mihomo_mapping(
+            definition, f"mihomo.rule_providers.{name}"
+        )
+
     routing_value = value.get("routing", {})
     if routing_value is None:
         routing_value = {}
@@ -321,24 +341,73 @@ def _load_mihomo_config(value: Any) -> MihomoConfig:
         routing_value.get("direct_node_name_keywords", []),
         "mihomo.routing.direct_node_name_keywords",
     )
-    direct_rules = _string_list(
-        routing_value.get("direct_rules", []),
-        "mihomo.routing.direct_rules",
+    if "rules" in value and "direct_rules" in routing_value:
+        raise ValidationError(
+            "mihomo.rules cannot be combined with legacy mihomo.routing.direct_rules"
+        )
+    rules_value = (
+        value["rules"] if "rules" in value else routing_value.get("direct_rules", [])
+    )
+    rules = _ordered_rule_list(
+        rules_value,
+        "mihomo.rules" if "rules" in value else "mihomo.routing.direct_rules",
     )
     if any(
         any(ord(char) < 32 or ord(char) == 127 for char in item)
-        for item in (*direct_node_name_keywords, *direct_rules)
+        for item in (*direct_node_name_keywords, *rules)
     ):
-        raise ValidationError("mihomo.routing values must not contain control characters")
+        raise ValidationError("mihomo routing and rules must not contain control characters")
 
     return MihomoConfig(
         hosts=MappingProxyType(normalized),
         geox_urls=MappingProxyType(geox_urls),
+        rule_providers=MappingProxyType(rule_providers),
+        rules=rules,
         routing=MihomoRoutingConfig(
             direct_node_name_keywords=direct_node_name_keywords,
-            direct_rules=direct_rules,
         ),
     )
+
+
+def _copy_mihomo_mapping(value: dict[str, Any], field: str) -> Mapping[str, Any]:
+    copied: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValidationError(f"{field} keys must be non-empty strings")
+        if any(ord(char) < 32 or ord(char) == 127 for char in key):
+            raise ValidationError(f"{field} keys must not contain control characters")
+        copied[key] = _copy_mihomo_value(item, f"{field}.{key}")
+    return MappingProxyType(copied)
+
+
+def _copy_mihomo_value(value: Any, field: str) -> Any:
+    if isinstance(value, dict):
+        return _copy_mihomo_mapping(value, field)
+    if isinstance(value, list):
+        return [_copy_mihomo_value(item, field) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        if any(
+            ord(char) < 32 and char not in "\t\r\n" or ord(char) == 127
+            for char in value
+        ):
+            raise ValidationError(f"{field} must not contain control characters")
+        return value
+    raise ValidationError(f"{field} contains an unsupported YAML value")
+
+
+def _ordered_rule_list(value: Any, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise ValidationError(f"{field} must be a list of non-empty strings")
+    if any(
+        any(ord(char) < 32 or ord(char) == 127 for char in item)
+        for item in value
+    ):
+        raise ValidationError(f"{field} must not contain control characters")
+    return tuple(value)
 
 
 def _normalize_mihomo_hostname(value: Any) -> str:

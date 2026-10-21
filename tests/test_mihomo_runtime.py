@@ -21,10 +21,13 @@ from subctl.render import build_mihomo_profile
 
 
 MIHOMO_BIN = os.environ.get("MIHOMO_BIN")
-pytestmark = pytest.mark.skipif(
-    not MIHOMO_BIN,
-    reason="set MIHOMO_BIN to run the local Mihomo runtime integration check",
-)
+pytestmark = [
+    pytest.mark.mihomo_integration,
+    pytest.mark.skipif(
+        not MIHOMO_BIN,
+        reason="set MIHOMO_BIN to run the Mihomo runtime integration check",
+    ),
+]
 
 
 class _FeedHandler(BaseHTTPRequestHandler):

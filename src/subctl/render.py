@@ -9,7 +9,7 @@ import pwd
 import re
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -535,6 +535,15 @@ def _build_common_proxy_policy(
             "geo-auto-update": True,
             "geo-update-interval": 24,
             **({"geox-url": dict(config.mihomo.geox_urls)} if config.mihomo.geox_urls else {}),
+            **(
+                {
+                    "rule-providers": _plain_mihomo_value(
+                        config.mihomo.rule_providers
+                    )
+                }
+                if config.mihomo.rule_providers
+                else {}
+            ),
             "proxy-providers": providers,
             "proxy-groups": groups,
             "rules": [
@@ -547,12 +556,20 @@ def _build_common_proxy_policy(
                 "IP-CIDR,::1/128,DIRECT,no-resolve",
                 "IP-CIDR,fc00::/7,DIRECT,no-resolve",
                 "IP-CIDR,fe80::/10,DIRECT,no-resolve",
-                *config.mihomo.routing.direct_rules,
+                *config.mihomo.rules,
                 "MATCH,BASE",
             ],
         },
         seed_snapshot,
     )
+
+
+def _plain_mihomo_value(value):
+    if isinstance(value, Mapping):
+        return {key: _plain_mihomo_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain_mihomo_value(item) for item in value]
+    return copy.deepcopy(value)
 
 
 def _is_within(path: Path, directory: Path) -> bool:

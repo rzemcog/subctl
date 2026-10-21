@@ -75,11 +75,12 @@ def config_data(tmp_path):
                 "mmdb": "https://geo.example.invalid/geoip.mmdb",
                 "asn": "https://geo.example.invalid/asn.mmdb",
             },
+            "rule_providers": {},
+            "rules": [
+                "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
+            ],
             "routing": {
                 "direct_node_name_keywords": ["Preferred", "Sample"],
-                "direct_rules": [
-                    "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
-                ],
             },
         },
         "render": {

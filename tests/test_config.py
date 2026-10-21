@@ -1,8 +1,10 @@
+from pathlib import Path
+
 import pytest
-import yaml
 
 from subctl.config import load_config, validate_settings_overlay
 from subctl.errors import ValidationError
+from subctl.registry import load_users
 from conftest import (
     VALID_ALICE_TOKEN,
     VALID_PROVIDER_TOKEN,
@@ -201,10 +203,14 @@ def test_validation_errors_do_not_print_full_secrets(
     assert_secret_not_printed(result, VALID_PROVIDER_TOKEN, VALID_ALICE_TOKEN)
 
 
-def test_examples_are_valid_yaml():
-    for path in ("examples/config.yaml", "examples/users.yaml"):
-        with open(path, encoding="utf-8") as handle:
-            assert yaml.safe_load(handle)
+def test_examples_load_as_application_configuration(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "examples/config.yaml", state_dir=tmp_path / "state")
+    users = load_users(root / "examples/users.yaml")
+
+    assert config.mihomo.rules == ()
+    assert dict(config.mihomo.rule_providers) == {}
+    assert users.users == {}
 
 
 def test_mihomo_hosts_are_read_from_runtime_config_and_normalized(
@@ -226,7 +232,61 @@ def test_mihomo_hosts_are_read_from_runtime_config_and_normalized(
     }
     assert dict(config.mihomo.geox_urls) == {}
     assert config.mihomo.routing.direct_node_name_keywords == ()
-    assert config.mihomo.routing.direct_rules == ()
+    assert config.mihomo.rules == ()
+    assert dict(config.mihomo.rule_providers) == {}
+
+
+def test_mihomo_rules_and_rule_providers_are_preserved_in_order(
+    write_yaml, config_data, provider_state_dir
+):
+    provider = {
+        "type": "http",
+        "behavior": "ipcidr",
+        "format": "text",
+        "url": "https://example.invalid/ranges.txt",
+        "path": "./ruleset/sample-ranges.txt",
+        "interval": 86400,
+        "header": {"X-Example": ["first", "second"]},
+    }
+    rules = [
+        "DOMAIN-SUFFIX,example.invalid,DIRECT",
+        "RULE-SET,sample-ranges,DIRECT",
+        "DOMAIN-SUFFIX,example.invalid,DIRECT",
+    ]
+    config_data["mihomo"]["rule_providers"] = {"sample-ranges": provider}
+    config_data["mihomo"]["rules"] = rules
+    config = load_config(
+        write_yaml("mihomo-policy.yaml", config_data),
+        state_dir=provider_state_dir,
+    )
+
+    assert config.mihomo.rules == tuple(rules)
+    assert dict(config.mihomo.rule_providers["sample-ranges"]) == provider
+
+
+def test_legacy_direct_rules_alias_loads_when_new_rules_are_absent(
+    write_yaml, config_data, provider_state_dir
+):
+    config_data["mihomo"].pop("rules")
+    config_data["mihomo"]["routing"]["direct_rules"] = [
+        "DOMAIN-SUFFIX,legacy.example,DIRECT",
+    ]
+    config = load_config(
+        write_yaml("legacy-routing.yaml", config_data),
+        state_dir=provider_state_dir,
+    )
+
+    assert config.mihomo.rules == ("DOMAIN-SUFFIX,legacy.example,DIRECT",)
+
+
+def test_new_rules_and_legacy_direct_rules_cannot_be_combined(
+    write_yaml, config_data, provider_state_dir
+):
+    config_data["mihomo"]["routing"]["direct_rules"] = []
+    path = write_yaml("ambiguous-routing.yaml", config_data)
+
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        load_config(path, state_dir=provider_state_dir)
 
 
 def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
@@ -240,7 +300,8 @@ def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
     assert dict(config.mihomo.hosts) == {}
     assert dict(config.mihomo.geox_urls) == {}
     assert config.mihomo.routing.direct_node_name_keywords == ()
-    assert config.mihomo.routing.direct_rules == ()
+    assert config.mihomo.rules == ()
+    assert dict(config.mihomo.rule_providers) == {}
 
 
 @pytest.mark.parametrize(
@@ -249,6 +310,9 @@ def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
         [],
         {"hosts": []},
         {"geox_urls": []},
+        {"rule_providers": []},
+        {"rule_providers": {"bad": []}},
+        {"rules": "DOMAIN,example.test,DIRECT"},
         {"routing": []},
         {"routing": {"direct_rules": ["one\ntwo"]}},
         {"geox_urls": {"other": "https://geo.example.test/file.dat"}},
@@ -265,7 +329,7 @@ def test_mihomo_hosts_are_optional_for_existing_runtime_configs(
         },
     ],
 )
-def test_invalid_mihomo_hosts_are_rejected(
+def test_invalid_mihomo_configuration_is_rejected(
     write_yaml, config_data, provider_state_dir, mihomo
 ):
     config_data["mihomo"] = mihomo
@@ -279,6 +343,8 @@ def test_invalid_mihomo_hosts_are_rejected(
     "mihomo",
     [
         {"hosts": {"sub.example.test": "192.0.2.27"}},
+        {"rules": [""]},
+        {"rule_providers": {"": {"type": "http"}}},
         {"routing": {"direct_rules": ["DOMAIN,example.test,DIRECT"]}},
         {"geox_urls": {"geoip": "https://geo.example.test/file.dat"}},
     ],
