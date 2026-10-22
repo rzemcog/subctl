@@ -9,6 +9,16 @@ from subctl.registry import load_users
 from subctl.render import build_mihomo_profile, render_user_yaml, render_users
 
 
+METACUBEX_GEOX_BASE_URL = (
+    "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest"
+)
+METACUBEX_GEOX_URLS = {
+    "geoip": f"{METACUBEX_GEOX_BASE_URL}/geoip-lite.dat",
+    "geosite": f"{METACUBEX_GEOX_BASE_URL}/geosite.dat",
+    "mmdb": f"{METACUBEX_GEOX_BASE_URL}/geoip.metadb",
+    "asn": f"{METACUBEX_GEOX_BASE_URL}/GeoLite2-ASN.mmdb",
+}
+
 CONFIGURED_DIRECT_RULES = [
     "DOMAIN-SUFFIX,example.invalid,DIRECT-NODES",
 ]
@@ -307,7 +317,7 @@ def test_render_passes_rule_providers_and_ordered_rules_through(
     assert profile["rules"][-1] == "MATCH,BASE"
 
 
-def test_render_omits_unconfigured_policy_and_geodata(
+def test_render_omits_unconfigured_policy_and_uses_default_geodata(
     config_data, write_yaml, users_path, provider_state_dir
 ):
     config_data["mihomo"] = {
@@ -326,7 +336,7 @@ def test_render_omits_unconfigured_policy_and_geodata(
     profile = build_mihomo_profile(config, user)
     groups = {group["name"]: group for group in profile["proxy-groups"]}
 
-    assert "geox-url" not in profile
+    assert profile["geox-url"] == METACUBEX_GEOX_URLS
     assert groups["DIRECT-PROXY"]["filter"] == "a^"
     assert "exclude-filter" not in groups["PROVIDER-AUTO-SEED"]
     assert "exclude-filter" not in groups["EXCLUDED-NODES"]
@@ -342,6 +352,25 @@ def test_render_omits_unconfigured_policy_and_geodata(
         "IP-CIDR,fe80::/10,DIRECT,no-resolve",
         "MATCH,BASE",
     ]
+
+
+def test_render_geox_url_overrides_only_configured_resources(
+    config_data, write_yaml, users_path, provider_state_dir
+):
+    override = "https://geo.example.invalid/custom-geoip.dat"
+    config_data["mihomo"]["geox_urls"] = {"geoip": override}
+    config = load_config(
+        write_yaml("partial-geox-override.yaml", config_data),
+        state_dir=provider_state_dir,
+    )
+    user = load_users(users_path).users["alice"]
+
+    profile = build_mihomo_profile(config, user)
+
+    assert profile["geox-url"] == {
+        **METACUBEX_GEOX_URLS,
+        "geoip": override,
+    }
 
 
 def test_render_includes_protected_mihomo_hosts_mapping(

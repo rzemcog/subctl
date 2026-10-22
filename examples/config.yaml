@@ -11,6 +11,7 @@ public:
 
 mihomo:
   hosts: {}
+  # Empty uses the default MetaCubeX GeoX URLs; set individual keys to override.
   geox_urls: {}
   rule_providers: {}
   rules: []

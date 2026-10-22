@@ -41,6 +41,15 @@ TUN_ROUTE_EXCLUDE_ADDRESSES = (
 )
 RenderMode = str
 FetchSubscription = Callable[[str, float], bytes]
+METACUBEX_GEOX_BASE_URL = (
+    "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest"
+)
+DEFAULT_GEOX_URLS = {
+    "geoip": f"{METACUBEX_GEOX_BASE_URL}/geoip-lite.dat",
+    "geosite": f"{METACUBEX_GEOX_BASE_URL}/geosite.dat",
+    "mmdb": f"{METACUBEX_GEOX_BASE_URL}/geoip.metadb",
+    "asn": f"{METACUBEX_GEOX_BASE_URL}/GeoLite2-ASN.mmdb",
+}
 
 
 @dataclass(frozen=True)
@@ -534,7 +543,7 @@ def _build_common_proxy_policy(
             "geodata-mode": False,
             "geo-auto-update": True,
             "geo-update-interval": 24,
-            **({"geox-url": dict(config.mihomo.geox_urls)} if config.mihomo.geox_urls else {}),
+            "geox-url": {**DEFAULT_GEOX_URLS, **config.mihomo.geox_urls},
             **(
                 {
                     "rule-providers": _plain_mihomo_value(
